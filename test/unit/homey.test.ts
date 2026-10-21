@@ -45,8 +45,6 @@ describe('house meter', () => {
       ['measure_current.L2', { value: 1, at: now }],
       ['measure_current.L3', { value: 1, at: now - 20 * MIN }],
     ]);
-    expect(readingFrom(held, now)).toBeNull();
-    held.set('measure_current.L3', { value: 1, at: now - 5 * MIN });
     expect(readingFrom(held, now)?.w).toEqual([460, 230, 230]);
     const latest = latestFromDevice({ id: 'x', capabilitiesObj: { measure_power: { value: 900, lastUpdated: new Date(now).toISOString() }, measure_current: { value: 'x' } } }, now);
     expect(latest.get('measure_power')).toEqual({ value: 900, at: now });
@@ -60,6 +58,8 @@ describe('references and prices', () => {
       { id: 'hp', name: 'Heatpump', class: 'heatpump', capabilities: ['measure_power'], capabilitiesObj: { measure_power: { value: power } } },
       { ...pulse, capabilitiesObj: { measure_power: { value: 3000 } } },
       { id: 'own', capabilities: ['measure_power'], capabilitiesObj: { measure_power: { value: 999 } } },
+      { id: 'sun', class: 'solarpanel', capabilities: ['measure_power'], capabilitiesObj: { measure_power: { value: 999 } } },
+      { id: 'inv', capabilities: ['measure_power', 'meter_power.exported'], capabilitiesObj: { measure_power: { value: 999 } } },
     ];
     [0, 0, 1300, 1300, 0, 1300].forEach((p, i) => tr.update(T0 + i * MIN, dev(p), new Set(['own'])));
     const refs = tr.references();
@@ -77,13 +77,14 @@ describe('references and prices', () => {
   test('price book: hourly prices, flat fallback, average', () => {
     const b = new PriceBook();
     b.record(T0 + 10 * MIN, 2);
+    b.record(T0 + 40 * MIN, 3); // quarter-hour prices: the hour is their mean
     b.record(T0 + 70 * MIN, 1);
     b.record(T0, NaN);
-    expect(b.priceAt(null)(T0 + 30 * MIN)).toBe(2);
+    expect(b.priceAt(null)(T0 + 30 * MIN)).toBe(2.5);
     expect(b.priceAt(1.5)(T0 + 5 * 3_600_000)).toBe(1.5);
-    expect(b.average(T0, T0 + 2 * 3_600_000, null)).toBe(1.5);
+    expect(b.average(T0, T0 + 2 * 3_600_000, null)).toBe(1.75);
     expect(b.average(0, 1, 9)).toBe(9);
-    expect(PriceBook.restore(b.snapshot()).priceAt(null)(T0)).toBe(2);
+    expect(PriceBook.restore(b.snapshot()).priceAt(null)(T0)).toBe(2.5);
   });
 });
 
@@ -108,6 +109,22 @@ describe('analysis', () => {
     expect(a.findings[0].kind).toBe('rhythmic-heater');
     expect(a.days).toHaveLength(1);
     expect(a.avgPrice).toBe(2);
+  });
+
+  test('a finished test keeps its stored verdict; a stored rate is used', () => {
+    const heaterId = engine.loads().find(l => l.phases === 'L1')!.id;
+    const end = T0 + 24 * 60 * MIN;
+    const stored = { status: 'confirmed' as const, expected: 4, observed: 0, pValue: 0.02, text: 'Confirmed' };
+    const a = analyse(engine, [], [], new PriceBook(), {
+      ...settings,
+      experiments: [
+        { id: 'a', loadId: heaterId, label: 'floor', startedAt: end - 4 * 3_600_000, hours: 3, result: stored },
+        { id: 'b', loadId: heaterId, label: 'floor', startedAt: end - 4 * 3_600_000, hours: 3, rate: 0 },
+      ],
+    }, end);
+    expect(a.experiments[0].status).toBe('confirmed');
+    expect(a.loads.find(l => l.id === heaterId)!.source).toBe('test');
+    expect(a.experiments[1].expected).toBe(0);
   });
 
   test('a user name wins; a passed switch-off test names the load', () => {

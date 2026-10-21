@@ -13,10 +13,11 @@ export const NOMINAL_VOLTAGE = 230;
 /** The total power must be newer than this (ms)... */
 export const MAX_VALUE_AGE_MS = 120_000;
 /**
- * ...while a phase value may be older: Homey reports a capability when it changes, so a phase
- * whose current has not moved keeps its last value (ms).
+ * ...while a phase value is held as long as the total keeps coming: Homey reports a capability
+ * when it changes, so a phase whose current has not moved keeps its last value. Falling back to a
+ * total-only reading instead would change the shape of the readings and fake a step.
  */
-export const MAX_HOLD_MS = 15 * 60_000;
+export const MAX_HOLD_MS = Infinity;
 
 export interface DeviceLike {
   id: string;

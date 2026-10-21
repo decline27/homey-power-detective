@@ -54,15 +54,32 @@ export function matchIntervals(
   // Lengths below the timing tolerance are not resolvable, so they count as the tolerance.
   const len = (x: Interval) => Math.max(x.end - x.start, tolMs, 1);
   const pairs: Array<{ r: number; d: number; o: number }> = [];
+  // Only detected runs that can reach the reference window are compared (sorted sweep), so
+  // thousands of runs on each side stay fast.
+  const order = detected.map((_, i) => i).sort((a, b) => detected[a].start - detected[b].start);
+  const starts = order.map(i => detected[i].start);
+  const longest = detected.reduce((m, d) => Math.max(m, d.end - d.start), 0);
+  const firstAtOrAfter = (t: number) => {
+    let lo = 0;
+    let hi = starts.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (starts[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
   reference.forEach((r, ri) => {
     const wide = { start: r.start - tolMs, end: r.end + tolMs };
-    detected.forEach((d, di) => {
+    for (let k = firstAtOrAfter(wide.start - longest); k < order.length && starts[k] <= wide.end; k++) {
+      const di = order[k];
+      const d = detected[di];
       const o = overlap(wide, d);
       const touches = o > 0 || (d.start === d.end && d.start >= wide.start && d.start <= wide.end);
       // A 20-minute heater cycle is not a 4-minute compressor run just because they overlap.
       const ratio = Math.max(len(r), len(d)) / Math.min(len(r), len(d));
       if (touches && ratio <= maxDurationRatio) pairs.push({ r: ri, d: di, o });
-    });
+    }
   });
   pairs.sort((a, b) => b.o - a.o);
   const usedR = new Set<number>();

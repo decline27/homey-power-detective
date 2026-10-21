@@ -61,6 +61,8 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   private summaryAt = 0;
   private status = 'Starting';
   private timeZone = 'Europe/Stockholm';
+  /** Which load each running start was, so its stop goes to the same load (by start time). */
+  private startedAs = new Map<number, string>();
 
   async onInit(): Promise<void> {
     this.timeZone = this.homey.clock.getTimezone() || this.timeZone;
@@ -76,14 +78,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       if (key === METER_SETTING) this.connectMeter().catch(e => this.error('Meter', e));
     });
 
-    try {
-      const { HomeyAPI } = require('homey-api');
-      this.api = await HomeyAPI.createAppAPI({ homey: this.homey });
-      await this.connectMeter();
-    } catch (e) {
-      this.status = `Cannot reach Homey's devices: ${(e as Error).message}`;
-      this.error('Homey API', e);
-    }
+    await this.connect();
 
     this.timers.push(this.homey.setInterval(() => this.sample(), SAMPLE_MS));
     this.timers.push(this.homey.setInterval(() => this.trackDevices().catch(e => this.error('Devices', e)), REFERENCE_MS));
@@ -99,6 +94,20 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   }
 
   // ---- house meter -------------------------------------------------------------------------
+
+  /** Connects to Homey's devices; retried every minute until it works. */
+  private async connect(): Promise<void> {
+    try {
+      if (!this.api) {
+        const { HomeyAPI } = require('homey-api');
+        this.api = await HomeyAPI.createAppAPI({ homey: this.homey });
+      }
+      await this.connectMeter();
+    } catch (e) {
+      this.status = `Cannot reach Homey's devices: ${(e as Error).message}`;
+      this.error('Homey API', e);
+    }
+  }
 
   private async devices(): Promise<DeviceLike[]> {
     if (!this.api) return [];
@@ -134,6 +143,15 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   }
 
   private sample(): void {
+    try {
+      this.sampleOnce();
+    } catch (e) {
+      // One bad reading must not stop the sampling.
+      this.error('Sample', e);
+    }
+  }
+
+  private sampleOnce(): void {
     const now = Date.now();
     const reading = readingFrom(this.latest, now);
     if (!reading) {
@@ -162,13 +180,18 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   private onStart(s: StepEvent): void {
     const load = this.loadFor({ start: s.t, end: s.t, delta: s.delta });
     if (!load) return;
+    this.startedAs.set(s.t, load.id);
+    if (this.startedAs.size > 200) this.startedAs.delete(this.startedAs.keys().next().value as number);
     const w = Math.round(s.delta[0] + s.delta[1] + s.delta[2]);
     this.homey.flow.getTriggerCard('load_started').trigger({ load: displayName(load), power: w }, { loadId: load.id }).catch(e => this.error(e));
     this.loadDevice(load.id)?.onStart(w);
   }
 
   private onStop(a: Activation): void {
-    const load = this.loadFor(a);
+    // The stop belongs to the load its start was (a long run can fail the stop-time checks).
+    const id = this.startedAs.get(a.start);
+    this.startedAs.delete(a.start);
+    const load = (id && this.analysis?.loads.find(l => l.id === id)) || this.loadFor(a);
     if (!load) return;
     const kWh = activationKWh(a);
     this.homey.flow
@@ -190,6 +213,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   // ---- metered devices and prices ------------------------------------------------------------
 
   private async trackDevices(): Promise<void> {
+    if (!this.api || !this.meterId) await this.connect();
     const now = Date.now();
     const devices = await this.devices();
     const own = new Set(devices.filter(d => d.driverId?.includes('com.decline27.powerdetective')).map(d => d.id));
@@ -212,7 +236,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       experiments: ((s.get(SETTINGS.experiments) as Experiment[]) ?? []).slice(-20),
       currency: s.get(SETTINGS.currency) || 'SEK',
       flatPrice: num(SETTINGS.flatPrice, null),
-      cop: num(SETTINGS.cop, 3) as number,
+      cop: Math.min(8, Math.max(1, num(SETTINGS.cop, 3) as number)),
       timeZone: this.timeZone,
     };
   }
@@ -228,8 +252,50 @@ module.exports = class PowerDetectiveApp extends Homey.App {
         .trigger({ title: f.title, saving: Math.round(f.savingPerMonth ?? f.costPerMonth ?? 0) })
         .catch(e => this.error(e));
     }
+    this.keepTestResults();
+    this.syncDevices();
     if (now - this.summaryAt > SUMMARY_EVERY_MS && this.analysis.observedHours >= 24 * 7) await this.writeSummary(true);
     return this.analysis;
+  }
+
+  /** Stores a test's verdict once it has ended, so it no longer depends on data that ages out. */
+  private keepTestResults(): void {
+    const list = (this.homey.settings.get(SETTINGS.experiments) as Experiment[]) ?? [];
+    let changed = false;
+    const next = list.map(e => {
+      if (e.result && e.result.status !== 'running') return e;
+      const v = this.analysis?.experiments.find(x => x.id === e.id);
+      if (!v || v.status === 'running') return e;
+      changed = true;
+      const { status, expected, observed, pValue, text } = v;
+      return { ...e, result: { status, expected, observed, pValue, text } };
+    });
+    if (changed) this.homey.settings.set(SETTINGS.experiments, next);
+  }
+
+  /** Load devices follow the analysis: a run whose stop was missed does not stay on. */
+  private syncDevices(): void {
+    let devices: Homey.Device[] = [];
+    try {
+      devices = this.homey.drivers.getDriver('load').getDevices();
+    } catch {
+      return;
+    }
+    for (const d of devices) {
+      const load = this.analysis?.loads.find(l => l.id === d.getData()?.loadId);
+      if (!load || load.running) continue;
+      if (d.getCapabilityValue('load_running') !== false) d.setCapabilityValue('load_running', false).catch(e => this.error(e));
+      if (d.getCapabilityValue('measure_power') !== 0) d.setCapabilityValue('measure_power', 0).catch(e => this.error(e));
+    }
+  }
+
+  /** Whether a load is running now, from the live starts (not the last analysis). */
+  isRunning(loadId: string): boolean {
+    if (!this.analysis) return false;
+    const now = Date.now();
+    return this.engine
+      .running()
+      .some(st => classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, this.analysis!.clusters)?.id === loadId);
   }
 
   async writeSummary(notify: boolean): Promise<{ text: string; source: string; error?: string }> {
@@ -287,6 +353,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       label: label.trim().slice(0, 60) || 'what you switched off',
       startedAt: Date.now(),
       hours: hours && hours > 0 ? Math.min(48, hours) : hoursNeeded(rate),
+      rate,
     };
     const list = ((this.homey.settings.get(SETTINGS.experiments) as Experiment[]) ?? []).concat(exp).slice(-20);
     this.homey.settings.set(SETTINGS.experiments, list);
@@ -313,7 +380,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.homey.flow
       .getConditionCard('load_running')
       .registerArgumentAutocompleteListener('load', auto)
-      .registerRunListener(async args => !!this.analysis?.loads.find(l => l.id === args.load.id)?.running);
+      .registerRunListener(async args => this.isRunning(args.load.id));
     this.homey.flow
       .getActionCard('start_test')
       .registerArgumentAutocompleteListener('load', auto)

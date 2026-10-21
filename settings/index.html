@@ -8,7 +8,7 @@
     :root {
       --bg: #f6f8f7; --card: #ffffff; --ink: #14201c; --muted: #5d6b66; --line: #e2e8e5;
       --accent: #0e7c66; --warn: #b5530b; --ok: #1f7a3a; --bad: #b42318;
-      --s1: #0e7c66; --s2: #3b82c4; --s3: #c2410c; --s4: #7c3aed; --s5: #ca8a04; --s6: #0891b2; --base: #94a3a0; --rest: #d6dcda;
+      --s1: #0e7c66; --s2: #3b82c4; --s3: #c2410c; --s4: #7c3aed; --s5: #ca8a04; --s6: #0891b2; --other: #64748b; --base: #94a3a0; --rest: #d6dcda;
     }
     @media (prefers-color-scheme: dark) {
       :root { --bg: #0f1513; --card: #18201d; --ink: #e8efec; --muted: #9aa8a3; --line: #2a3531; --rest: #3a4541; --base: #6b7a76; }
@@ -95,7 +95,7 @@
   const r = (x, d = 0) => (x === null || x === undefined || !isFinite(x)) ? '–' : (Math.round(x * 10 ** d) / 10 ** d).toLocaleString();
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const nameOf = l => l.name || `${Math.round(l.medianW / 10) * 10} W on ${l.phases}`;
-  let H = null, state = null;
+  let H = null, state = null, filled = false;
 
   function api(method, path, body) {
     return new Promise((res, rej) => H.api(method, path, body || null, (e, v) => e ? rej(e) : res(v)));
@@ -106,7 +106,9 @@
     if (!days.length) { el.innerHTML = '<span class="muted">Collecting the first day…</span>'; return; }
     const top = loads.slice(0, 6).map(l => l.id);
     const W = Math.max(280, el.clientWidth || 320), Hh = 170, pad = 22, bw = (W - pad) / days.length;
-    const max = Math.max(...days.map(d => d.totalKWh), 1);
+    // Scale to the tallest stack: base load plus loads can exceed the metered total on a day.
+    const stack = d => Math.max(d.totalKWh, d.baseloadKWh + d.loads.reduce((a, x) => a + x.kWh, 0) + d.unexplainedKWh);
+    const max = Math.max(...days.map(stack), 1);
     let s = `<svg width="${W}" height="${Hh + 18}" role="img" aria-label="Energy per day">`;
     days.forEach((d, i) => {
       let y = Hh;
@@ -117,7 +119,7 @@
       seg(d.baseloadKWh, css('--base'), 'Base load');
       top.forEach((id, k) => { const row = d.loads.find(x => x.loadId === id); if (row) seg(row.kWh, css(COLORS[k]), nameOf(loads[k])); });
       const others = d.loads.filter(x => !top.includes(x.loadId)).reduce((a, x) => a + x.kWh, 0);
-      if (others > 0) seg(others, css('--s6'), 'Other loads');
+      if (others > 0) seg(others, css('--other'), 'Other loads');
       seg(d.unexplainedKWh, css('--rest'), 'Unexplained');
       s += `<text x="${pad + i * bw + bw / 2}" y="${Hh + 14}" font-size="10" text-anchor="middle" fill="${css('--muted')}">${d.date.slice(5)}</text>`;
     });
@@ -125,7 +127,7 @@
     el.innerHTML = s;
     document.getElementById('legend').innerHTML =
       top.map((id, k) => `<span><i style="background:${css(COLORS[k])}"></i>${esc(nameOf(loads[k]))}</span>`).join('') +
-      `<span><i style="background:${css('--base')}"></i>Base load</span><span><i style="background:${css('--rest')}"></i>Unexplained</span>`;
+      `<span><i style="background:${css('--other')}"></i>Other loads</span><span><i style="background:${css('--base')}"></i>Base load</span><span><i style="background:${css('--rest')}"></i>Unexplained</span>`;
   }
 
   function render(s) {
@@ -156,9 +158,11 @@
         </div>
       </div>`).join('') : '<div class="card muted">Nothing yet: findings need a day or two of data.</div>';
 
-    document.getElementById('loads').innerHTML = s.loads.length ? s.loads.map((l, i) => `
+    // Don't rebuild the list while the user is typing a name in it.
+    const typing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.name;
+    if (!typing) document.getElementById('loads').innerHTML = s.loads.length ? s.loads.map((l, i) => `
       <div class="load">
-        <div class="dot" style="background:${i < 6 ? css(COLORS[i]) : css('--s6')}"></div>
+        <div class="dot" style="background:${i < 6 ? css(COLORS[i]) : css('--other')}"></div>
         <div>
           <div class="name">${esc(nameOf(l))} ${l.running ? '<span class="chip on">running</span>' : ''}</div>
           <div class="muted" style="font-size:12px">
@@ -184,9 +188,13 @@
       : '<span class="muted">No metered device matched yet (heat pump, EV charger, smart plugs appear here once they have run a few times).</span>';
     if (s.summary) document.getElementById('summary').innerHTML = `${esc(s.summary.text)}<div class="muted" style="font-size:12px;margin-top:4px">${s.summary.source === 'claude' ? 'Written by Claude' : 'Template'} · ${new Date(s.summary.at).toLocaleString()}${s.summary.error ? ` · ${esc(s.summary.error)}` : ''}</div>`;
 
-    document.getElementById('currency').value = s.settings.currency;
-    document.getElementById('flat').value = s.settings.flatPrice ?? '';
-    document.getElementById('cop').value = s.settings.cop;
+    // The settings fields are filled once; the minute refresh must not overwrite what is typed.
+    if (!filled) {
+      filled = true;
+      document.getElementById('currency').value = s.settings.currency;
+      document.getElementById('flat').value = s.settings.flatPrice ?? '';
+      document.getElementById('cop').value = s.settings.cop;
+    }
     document.getElementById('key').placeholder = s.settings.apiKeySet ? 'Key saved (enter a new one to replace it)' : 'sk-ant-…';
   }
 
@@ -224,7 +232,7 @@
         set('house_meter_device_id', document.getElementById('meter').value),
         set('currency', document.getElementById('currency').value.trim() || 'SEK'),
         set('flat_price', document.getElementById('flat').value === '' ? null : Number(document.getElementById('flat').value)),
-        set('heat_pump_cop', Number(document.getElementById('cop').value) || 3),
+        set('heat_pump_cop', Math.min(8, Math.max(1, Number(document.getElementById('cop').value) || 3))),
         set('language', document.getElementById('lang').value),
         key ? set('anthropic_api_key', key) : Promise.resolve(),
       ]).then(() => { document.getElementById('saved').textContent = 'Saved'; document.getElementById('key').value = ''; reload(); });

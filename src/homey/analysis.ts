@@ -103,6 +103,7 @@ export function analyse(
 
   // A test the user ran and passed names the load as well.
   const tests = s.experiments.map(e => {
+    if (e.result && e.result.status !== 'running') return { e, r: e.result };
     const load = clusters.find(c => c.id === e.loadId);
     const before = load ? load.activations.filter(a => a.start < e.startedAt && a.start >= e.startedAt - 7 * 86_400_000) : [];
     const observedFrom = Math.max(engine.observedFrom() ?? e.startedAt, e.startedAt - 7 * 86_400_000);
@@ -111,7 +112,7 @@ export function analyse(
     const during = engine
       .allActivations()
       .filter(a => a.start >= e.startedAt && a.start < end && classify(a, clusters)?.id === e.loadId).length;
-    return { e, r: evaluateExperiment(e, now, before.length / hoursBefore, during) };
+    return { e, r: evaluateExperiment(e, now, e.rate ?? before.length / hoursBefore, during) };
   });
   const confirmedBy = new Map(tests.filter(t => t.r.status === 'confirmed').map(t => [t.e.loadId, t.e.label]));
 

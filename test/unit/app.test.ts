@@ -118,6 +118,7 @@ test('live values become readings; loads, flows, actions and saved state work en
   expect(await homey.run.get('load_started')!({ load: { id: 'other' } }, { loadId: heater.id })).toBe(false);
   expect(await homey.run.get('load_stopped')!({}, { loadId: heater.id })).toBe(true);
   expect(typeof (await homey.run.get('load_running')!({ load: { id: heater.id } }))).toBe('boolean');
+  expect(app.isRunning('nope')).toBe(false);
   expect(await homey.autocomplete.get('load_running')!('', {})).toHaveLength(view.loads.length);
   expect(await homey.run.get('start_test')!({ load: { id: heater.id }, label: 'thermostat', hours: 3 })).toBe(true);
   const exp = app.startExperiment(heater.id, 'kitchen thermostat');

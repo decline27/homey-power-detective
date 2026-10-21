@@ -15,9 +15,16 @@ export interface DayRecord {
   hist: number[];
 }
 
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+
 export function localDate(t: number, timeZone: string): string {
-  // en-CA gives YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t));
+  let f = dateFormats.get(timeZone);
+  if (!f) {
+    // en-CA gives YYYY-MM-DD. Building a formatter is slow, so there is one per time zone.
+    f = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    dateFormats.set(timeZone, f);
+  }
+  return f.format(new Date(t));
 }
 
 export class DayMeter {

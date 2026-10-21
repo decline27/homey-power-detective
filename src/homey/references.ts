@@ -39,8 +39,9 @@ export class ReferenceTracker {
       if (exclude.has(d.id)) continue;
       const power = d.capabilitiesObj?.measure_power?.value;
       if (!Array.isArray(d.capabilities) || !d.capabilities.includes('measure_power') || typeof power !== 'number') continue;
-      // Other whole-house meters are not loads.
+      // Other whole-house meters, solar inverters and batteries are not loads.
       if (d.energyObj?.cumulative === true || d.capabilities.includes('meter_power.imported')) continue;
+      if (d.class === 'solarpanel' || d.class === 'battery' || d.capabilities.includes('meter_power.exported')) continue;
       let tr = this.tracks.get(d.id);
       if (!tr) {
         tr = { name: d.name ?? d.id, heatPump: d.class === 'heatpump', intervals: [], open: null, lastSeen: now };

@@ -99,7 +99,7 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
         costPerMonth: costM,
         savingPerMonth: costM === null ? null : costM * (1 - 1 / inp.heatPumpCop),
         confidence: name ? 'high' : c.count >= 24 ? 'medium' : 'low',
-        experimentHours: Math.max(3, Math.ceil((3 * period) / 60)),
+        experimentHours: Math.min(48, Math.max(3, Math.ceil((3 * period) / 60))),
       });
     }
 

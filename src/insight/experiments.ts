@@ -13,6 +13,10 @@ export interface Experiment {
   label: string;
   startedAt: number;
   hours: number;
+  /** The load's normal starts per hour, measured when the test began. */
+  rate?: number;
+  /** Kept once the test has ended, so the verdict does not drift as old data ages out. */
+  result?: ExperimentResult;
 }
 
 export type ExperimentStatus = 'running' | 'confirmed' | 'rejected' | 'inconclusive';

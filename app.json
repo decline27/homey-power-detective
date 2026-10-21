@@ -96,6 +96,7 @@
           {
             "type": "autocomplete",
             "name": "load",
+            "required": false,
             "title": {
               "en": "Load",
               "sv": "Last"
@@ -141,6 +142,7 @@
           {
             "type": "autocomplete",
             "name": "load",
+            "required": false,
             "title": {
               "en": "Load",
               "sv": "Last"

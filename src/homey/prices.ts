@@ -11,10 +11,16 @@ const KEEP_HOURS = 24 * 35;
 
 export class PriceBook {
   private hours = new Map<number, number>();
+  /** Samples of the current hour: prices can change every 15 minutes, so the hour is their mean. */
+  private current: { hour: number; sum: number; n: number } | null = null;
 
   record(t: number, price: number): void {
     if (!Number.isFinite(price) || price < -10 || price > 100) return;
-    this.hours.set(hourStart(t), price);
+    const hour = hourStart(t);
+    if (this.current?.hour !== hour) this.current = { hour, sum: 0, n: 0 };
+    this.current.sum += price;
+    this.current.n += 1;
+    this.hours.set(hour, this.current.sum / this.current.n);
     if (this.hours.size > KEEP_HOURS) {
       const oldest = [...this.hours.keys()].sort((a, b) => a - b).slice(0, this.hours.size - KEEP_HOURS);
       oldest.forEach(k => this.hours.delete(k));

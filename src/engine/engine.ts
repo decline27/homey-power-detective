@@ -14,6 +14,7 @@ import { DayMeter, DayRecord } from './day-meter';
 import { decompose } from './decompose';
 import { StepDetector } from './detector';
 import { Pairer } from './pairer';
+import { LoadRegistry, RegisteredLoad } from './registry';
 import { Activation, LoadCluster, Sample, StepEvent, Vec3 } from './types';
 
 export interface Reading extends Sample {
@@ -28,6 +29,7 @@ export interface EngineSnapshot {
   days: DayRecord[];
   firstReading: number | null;
   lastReading: number | null;
+  registry?: RegisteredLoad[];
 }
 
 export interface PushResult {
@@ -42,6 +44,7 @@ export class PowerEngine {
   private meter: DayMeter;
   private firstReading: number | null = null;
   private lastReading: number | null = null;
+  private registry = new LoadRegistry();
 
   constructor(readonly timeZone = 'Europe/Stockholm') {
     this.meter = new DayMeter(timeZone);
@@ -78,12 +81,12 @@ export class PowerEngine {
     }
   }
 
-  /** Loads seen in the window (default: everything stored). */
+  /** Loads seen in the window (default: everything stored), with ids that stay the same over time. */
   loads(from?: number, to?: number): LoadCluster[] {
     const lo = from ?? this.firstReading ?? 0;
     const hi = to ?? this.lastReading ?? Date.now();
     const acts = this.activations.filter(a => a.start >= lo && a.start < hi);
-    return clusterActivations(acts, { from: Math.max(lo, this.firstReading ?? lo), to: hi });
+    return this.registry.assign(clusterActivations(acts, { from: Math.max(lo, this.firstReading ?? lo), to: hi }), hi);
   }
 
   /** Starts with no stop yet: loads running now. */
@@ -114,6 +117,7 @@ export class PowerEngine {
       days: this.meter.all(),
       firstReading: this.firstReading,
       lastReading: this.lastReading,
+      registry: this.registry.snapshot(),
     };
   }
 
@@ -134,6 +138,7 @@ export class PowerEngine {
     e.meter.restore(Array.isArray(s.days) ? s.days : []);
     e.firstReading = typeof s.firstReading === 'number' ? s.firstReading : null;
     e.lastReading = typeof s.lastReading === 'number' ? s.lastReading : null;
+    e.registry = new LoadRegistry(Array.isArray(s.registry) ? s.registry : []);
     return e;
   }
 }

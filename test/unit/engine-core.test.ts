@@ -3,7 +3,8 @@ import { decompose } from '../../src/engine/decompose';
 import { LevelChange, StepDetector } from '../../src/engine/detector';
 import { PowerEngine } from '../../src/engine/engine';
 import { Pairer, cosine, matchScore } from '../../src/engine/pairer';
-import { Activation, StepEvent, Vec3, activationKWh, activationW } from '../../src/engine/types';
+import { LoadRegistry } from '../../src/engine/registry';
+import { Activation, LoadCluster, StepEvent, Vec3, activationKWh, activationW } from '../../src/engine/types';
 import { MIN, T0, every, synthHouse } from '../helpers/synth';
 
 const run = (readings: Array<{ t: number; w: Vec3; total?: number }>) => {
@@ -251,5 +252,39 @@ describe('PowerEngine end to end (synthetic house)', () => {
     expect(f.observedFrom()).toBe(T0);
     expect(PowerEngine.restore({ version: 2 }).allActivations()).toEqual([]);
     expect(PowerEngine.restore({ version: 1, activations: [[1, 2, 3], 'x'], open: null, days: 'x' }).allActivations()).toEqual([]);
+  });
+});
+
+describe('LoadRegistry (stable ids)', () => {
+  const cluster = (id: string, share: Vec3, medianW: number, kWhPerDay = 1): LoadCluster => ({
+    id, phases: 'L1', share, medianW, medianMinutes: 20, p90Minutes: 25, count: 10, startsPerDay: 20, kWhPerDay,
+    periodMinutes: 60, periodCv: 0.1, rhythmic: true, activations: [],
+  });
+
+  test('a load keeps its id when its median drifts across an id bucket', () => {
+    const r = new LoadRegistry();
+    const first = r.assign([cluster('L1-72', [1, 0, 0], 1408)], T0);
+    const later = r.assign([cluster('L1-73', [1, 0, 0], 1409)], T0 + MIN);
+    expect(later[0].id).toBe(first[0].id);
+  });
+
+  test('two similar loads keep their ids when their order flips; a new load gets a new id', () => {
+    const r = new LoadRegistry();
+    const a = r.assign([cluster('L1-72', [1, 0, 0], 1300, 5), cluster('L1-72', [0.8, 0.2, 0], 1350, 1)], T0);
+    const b = r.assign([cluster('L1-72', [0.8, 0.2, 0], 1350, 9), cluster('L1-72', [1, 0, 0], 1300, 1)], T0 + MIN);
+    expect(b.find(c => c.share[0] === 1)!.id).toBe(a.find(c => c.share[0] === 1)!.id);
+    expect(b.find(c => c.share[0] === 0.8)!.id).toBe(a.find(c => c.share[0] === 0.8)!.id);
+    expect(new Set(a.map(c => c.id)).size).toBe(2);
+    const c = r.assign([cluster('L2-80', [0, 1, 0], 3000)], T0 + 2 * MIN);
+    expect(a.map(x => x.id)).not.toContain(c[0].id);
+  });
+
+  test('survives a snapshot; forgets loads not seen for 90 days; ignores bad entries', () => {
+    const r = new LoadRegistry();
+    const id = r.assign([cluster('L1-72', [1, 0, 0], 1300)], T0)[0].id;
+    const back = new LoadRegistry([...JSON.parse(JSON.stringify(r.snapshot())), { id: 'bad' }]);
+    expect(back.assign([cluster('L1-71', [1, 0, 0], 1290)], T0 + MIN)[0].id).toBe(id);
+    back.assign([], T0 + 100 * 86_400_000);
+    expect(back.snapshot()).toEqual([]);
   });
 });
