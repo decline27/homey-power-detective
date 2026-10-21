@@ -1,0 +1,10 @@
+{
+  "title": { "en": "A load stopped", "sv": "En last stannade" },
+  "titleFormatted": { "en": "[[load]] stopped", "sv": "[[load]] stannade" },
+  "args": [{ "type": "autocomplete", "name": "load", "title": { "en": "Load", "sv": "Last" }, "placeholder": { "en": "Any load", "sv": "Vilken last som helst" } }],
+  "tokens": [
+    { "type": "string", "name": "load", "title": { "en": "Load", "sv": "Last" }, "example": "Kitchen floor" },
+    { "type": "number", "name": "minutes", "title": { "en": "Ran (min)", "sv": "Gick (min)" }, "example": 21 },
+    { "type": "number", "name": "kwh", "title": { "en": "Energy (kWh)", "sv": "Energi (kWh)" }, "example": 0.47 }
+  ]
+}

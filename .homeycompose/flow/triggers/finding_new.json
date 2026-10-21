@@ -1,0 +1,7 @@
+{
+  "title": { "en": "A new finding", "sv": "Ett nytt fynd" },
+  "tokens": [
+    { "type": "string", "name": "title", "title": { "en": "Finding", "sv": "Fynd" }, "example": "A 1330 W load on L1 runs every 63 min" },
+    { "type": "number", "name": "saving", "title": { "en": "Money per month", "sv": "Pengar per månad" }, "example": 450 }
+  ]
+}

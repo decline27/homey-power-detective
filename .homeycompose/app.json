@@ -1,0 +1,29 @@
+{
+  "id": "com.decline27.powerdetective",
+  "version": "0.1.0",
+  "compatibility": ">=12.2.0",
+  "sdk": 3,
+  "platforms": ["local"],
+  "name": { "en": "Power Detective", "sv": "Power Detective" },
+  "description": {
+    "en": "See which loads use power in your house from your house meter alone",
+    "sv": "Se vilka laster som drar ström i huset, bara från elmätaren"
+  },
+  "category": ["energy"],
+  "permissions": ["homey:manager:api"],
+  "author": { "name": "Kjetil Vetlejord", "email": "decline27@gmail.com" },
+  "images": {
+    "small": "/assets/images/small.png",
+    "large": "/assets/images/large.png",
+    "xlarge": "/assets/images/xlarge.png"
+  },
+  "brandColor": "#0E7C66",
+  "support": "https://github.com/decline27/homey-power-detective/issues",
+  "api": {
+    "getState": { "method": "GET", "path": "/state" },
+    "getMeters": { "method": "GET", "path": "/meters" },
+    "setName": { "method": "POST", "path": "/name" },
+    "startTest": { "method": "POST", "path": "/test" },
+    "writeSummary": { "method": "POST", "path": "/summary" }
+  }
+}

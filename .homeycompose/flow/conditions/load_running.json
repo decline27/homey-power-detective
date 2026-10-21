@@ -1,0 +1,5 @@
+{
+  "title": { "en": "A load !{{is|is not}} running", "sv": "En last !{{är|är inte}} igång" },
+  "titleFormatted": { "en": "[[load]] !{{is|is not}} running", "sv": "[[load]] !{{är|är inte}} igång" },
+  "args": [{ "type": "autocomplete", "name": "load", "title": { "en": "Load", "sv": "Last" } }]
+}

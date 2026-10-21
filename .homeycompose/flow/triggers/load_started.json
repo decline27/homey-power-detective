@@ -1,0 +1,9 @@
+{
+  "title": { "en": "A load started", "sv": "En last startade" },
+  "titleFormatted": { "en": "[[load]] started", "sv": "[[load]] startade" },
+  "args": [{ "type": "autocomplete", "name": "load", "title": { "en": "Load", "sv": "Last" }, "placeholder": { "en": "Any load", "sv": "Vilken last som helst" } }],
+  "tokens": [
+    { "type": "string", "name": "load", "title": { "en": "Load", "sv": "Last" }, "example": "Kitchen floor" },
+    { "type": "number", "name": "power", "title": { "en": "Power (W)", "sv": "Effekt (W)" }, "example": 1330 }
+  ]
+}

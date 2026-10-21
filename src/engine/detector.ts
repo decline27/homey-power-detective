@@ -84,7 +84,9 @@ class PhaseTracker {
     const tail = this.transition.slice(-n);
     const lo = Math.min(...tail.map(x => x.v));
     const hi = Math.max(...tail.map(x => x.v));
-    const settled = tail.length >= n && hi - lo <= this.tol((hi + lo) / 2);
+    // Tighter than the steady band: a ramp moving less than the noise band per reading would
+    // otherwise look settled halfway up.
+    const settled = tail.length >= n && hi - lo <= this.cfg.SETTLE_BAND * this.tol((hi + lo) / 2);
     if (!settled && this.transition.length < this.cfg.MAX_TRANSITION_SAMPLES) return null;
     const after = tail.reduce((s, x) => s + x.v, 0) / tail.length;
     const out = { t: this.transition[0].t, settledAt: tail[0].t, delta: after - this.before };

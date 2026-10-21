@@ -1,0 +1,9 @@
+{
+  "title": { "en": "Start a switch-off test", "sv": "Starta ett avstängningstest" },
+  "titleFormatted": { "en": "I switched off [[label]]: test if it is [[load]] for [[hours]] h", "sv": "Jag stängde av [[label]]: testa om det är [[load]] i [[hours]] h" },
+  "args": [
+    { "type": "text", "name": "label", "title": { "en": "What you switched off", "sv": "Vad du stängde av" }, "placeholder": { "en": "Kitchen floor heating", "sv": "Golvvärme kök" } },
+    { "type": "autocomplete", "name": "load", "title": { "en": "Load", "sv": "Last" } },
+    { "type": "number", "name": "hours", "title": { "en": "Hours", "sv": "Timmar" }, "min": 1, "max": 48, "step": 1, "placeholder": { "en": "4", "sv": "4" } }
+  ]
+}

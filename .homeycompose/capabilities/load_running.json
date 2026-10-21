@@ -1,0 +1,11 @@
+{
+  "type": "boolean",
+  "title": { "en": "Running", "sv": "Igång" },
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor",
+  "insights": true,
+  "insightsTitleTrue": { "en": "Started", "sv": "Startade" },
+  "insightsTitleFalse": { "en": "Stopped", "sv": "Stannade" },
+  "icon": "/assets/icon.svg"
+}

@@ -8,8 +8,10 @@ export const DETECTOR = {
   TOL_ABS_W: 60,
   /** ...or this share of the level, whichever is larger. */
   TOL_REL: 0.04,
-  /** Readings in a row that must agree before a new level counts as reached. */
+  /** Readings in a row that must agree before a new level counts as reached... */
   SETTLE_SAMPLES: 2,
+  /** ...to within this share of the noise band. */
+  SETTLE_BAND: 0.5,
   /** A change still moving after this many readings is closed at its latest level. */
   MAX_TRANSITION_SAMPLES: 12,
   /** Smallest change reported, summed over the phases (W). */

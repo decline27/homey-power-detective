@@ -1,0 +1,319 @@
+{
+  "_comment": "This file is generated. Please edit .homeycompose/app.json instead.",
+  "id": "com.decline27.powerdetective",
+  "version": "0.1.0",
+  "compatibility": ">=12.2.0",
+  "sdk": 3,
+  "platforms": [
+    "local"
+  ],
+  "name": {
+    "en": "Power Detective",
+    "sv": "Power Detective"
+  },
+  "description": {
+    "en": "See which loads use power in your house from your house meter alone",
+    "sv": "Se vilka laster som drar ström i huset, bara från elmätaren"
+  },
+  "category": [
+    "energy"
+  ],
+  "permissions": [
+    "homey:manager:api"
+  ],
+  "author": {
+    "name": "Kjetil Vetlejord",
+    "email": "decline27@gmail.com"
+  },
+  "images": {
+    "small": "/assets/images/small.png",
+    "large": "/assets/images/large.png",
+    "xlarge": "/assets/images/xlarge.png"
+  },
+  "brandColor": "#0E7C66",
+  "support": "https://github.com/decline27/homey-power-detective/issues",
+  "api": {
+    "getState": {
+      "method": "GET",
+      "path": "/state"
+    },
+    "getMeters": {
+      "method": "GET",
+      "path": "/meters"
+    },
+    "setName": {
+      "method": "POST",
+      "path": "/name"
+    },
+    "startTest": {
+      "method": "POST",
+      "path": "/test"
+    },
+    "writeSummary": {
+      "method": "POST",
+      "path": "/summary"
+    }
+  },
+  "flow": {
+    "triggers": [
+      {
+        "title": {
+          "en": "A new finding",
+          "sv": "Ett nytt fynd"
+        },
+        "tokens": [
+          {
+            "type": "string",
+            "name": "title",
+            "title": {
+              "en": "Finding",
+              "sv": "Fynd"
+            },
+            "example": "A 1330 W load on L1 runs every 63 min"
+          },
+          {
+            "type": "number",
+            "name": "saving",
+            "title": {
+              "en": "Money per month",
+              "sv": "Pengar per månad"
+            },
+            "example": 450
+          }
+        ],
+        "id": "finding_new"
+      },
+      {
+        "title": {
+          "en": "A load started",
+          "sv": "En last startade"
+        },
+        "titleFormatted": {
+          "en": "[[load]] started",
+          "sv": "[[load]] startade"
+        },
+        "args": [
+          {
+            "type": "autocomplete",
+            "name": "load",
+            "title": {
+              "en": "Load",
+              "sv": "Last"
+            },
+            "placeholder": {
+              "en": "Any load",
+              "sv": "Vilken last som helst"
+            }
+          }
+        ],
+        "tokens": [
+          {
+            "type": "string",
+            "name": "load",
+            "title": {
+              "en": "Load",
+              "sv": "Last"
+            },
+            "example": "Kitchen floor"
+          },
+          {
+            "type": "number",
+            "name": "power",
+            "title": {
+              "en": "Power (W)",
+              "sv": "Effekt (W)"
+            },
+            "example": 1330
+          }
+        ],
+        "id": "load_started"
+      },
+      {
+        "title": {
+          "en": "A load stopped",
+          "sv": "En last stannade"
+        },
+        "titleFormatted": {
+          "en": "[[load]] stopped",
+          "sv": "[[load]] stannade"
+        },
+        "args": [
+          {
+            "type": "autocomplete",
+            "name": "load",
+            "title": {
+              "en": "Load",
+              "sv": "Last"
+            },
+            "placeholder": {
+              "en": "Any load",
+              "sv": "Vilken last som helst"
+            }
+          }
+        ],
+        "tokens": [
+          {
+            "type": "string",
+            "name": "load",
+            "title": {
+              "en": "Load",
+              "sv": "Last"
+            },
+            "example": "Kitchen floor"
+          },
+          {
+            "type": "number",
+            "name": "minutes",
+            "title": {
+              "en": "Ran (min)",
+              "sv": "Gick (min)"
+            },
+            "example": 21
+          },
+          {
+            "type": "number",
+            "name": "kwh",
+            "title": {
+              "en": "Energy (kWh)",
+              "sv": "Energi (kWh)"
+            },
+            "example": 0.47
+          }
+        ],
+        "id": "load_stopped"
+      }
+    ],
+    "conditions": [
+      {
+        "title": {
+          "en": "A load !{{is|is not}} running",
+          "sv": "En last !{{är|är inte}} igång"
+        },
+        "titleFormatted": {
+          "en": "[[load]] !{{is|is not}} running",
+          "sv": "[[load]] !{{är|är inte}} igång"
+        },
+        "args": [
+          {
+            "type": "autocomplete",
+            "name": "load",
+            "title": {
+              "en": "Load",
+              "sv": "Last"
+            }
+          }
+        ],
+        "id": "load_running"
+      }
+    ],
+    "actions": [
+      {
+        "title": {
+          "en": "Start a switch-off test",
+          "sv": "Starta ett avstängningstest"
+        },
+        "titleFormatted": {
+          "en": "I switched off [[label]]: test if it is [[load]] for [[hours]] h",
+          "sv": "Jag stängde av [[label]]: testa om det är [[load]] i [[hours]] h"
+        },
+        "args": [
+          {
+            "type": "text",
+            "name": "label",
+            "title": {
+              "en": "What you switched off",
+              "sv": "Vad du stängde av"
+            },
+            "placeholder": {
+              "en": "Kitchen floor heating",
+              "sv": "Golvvärme kök"
+            }
+          },
+          {
+            "type": "autocomplete",
+            "name": "load",
+            "title": {
+              "en": "Load",
+              "sv": "Last"
+            }
+          },
+          {
+            "type": "number",
+            "name": "hours",
+            "title": {
+              "en": "Hours",
+              "sv": "Timmar"
+            },
+            "min": 1,
+            "max": 48,
+            "step": 1,
+            "placeholder": {
+              "en": "4",
+              "sv": "4"
+            }
+          }
+        ],
+        "id": "start_test"
+      }
+    ]
+  },
+  "drivers": [
+    {
+      "name": {
+        "en": "Found load",
+        "sv": "Hittad last"
+      },
+      "class": "other",
+      "capabilities": [
+        "measure_power",
+        "meter_power",
+        "load_running"
+      ],
+      "platforms": [
+        "local"
+      ],
+      "connectivity": [],
+      "images": {
+        "small": "/drivers/load/assets/images/small.png",
+        "large": "/drivers/load/assets/images/large.png",
+        "xlarge": "/drivers/load/assets/images/xlarge.png"
+      },
+      "pair": [
+        {
+          "id": "list_devices",
+          "template": "list_devices",
+          "navigation": {
+            "next": "add_devices"
+          }
+        },
+        {
+          "id": "add_devices",
+          "template": "add_devices"
+        }
+      ],
+      "id": "load"
+    }
+  ],
+  "capabilities": {
+    "load_running": {
+      "type": "boolean",
+      "title": {
+        "en": "Running",
+        "sv": "Igång"
+      },
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor",
+      "insights": true,
+      "insightsTitleTrue": {
+        "en": "Started",
+        "sv": "Startade"
+      },
+      "insightsTitleFalse": {
+        "en": "Stopped",
+        "sv": "Stannade"
+      },
+      "icon": "/assets/icon.svg"
+    }
+  }
+}
