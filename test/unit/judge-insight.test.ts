@@ -200,6 +200,16 @@ describe('ledger and findings', () => {
     expect(f[2].title).toContain('likely the heat pump');
   });
 
+  test('a base load from a partial day is not "never", and not high confidence', () => {
+    const input = { loads: [], names: {}, heatPumpLoadIds: [], baseloadW: 640, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, timeZone: 'UTC' };
+    const partial = buildFindings({ ...input, baseloadFullDay: false }).find(x => x.kind === 'base-load')!;
+    expect(partial.title).toBe('So far the house has not drawn less than 640 W');
+    expect(partial.confidence).toBe('low');
+    const full = buildFindings({ ...input, baseloadFullDay: true }).find(x => x.kind === 'base-load')!;
+    expect(full.title).toBe('The house never draws less than 640 W');
+    expect(full.confidence).toBe('high');
+  });
+
   test('a named heat pump is not called a heater; no price, no money', () => {
     const pump = loads.find(l => l.phases === '3-phase')!;
     const f = buildFindings({

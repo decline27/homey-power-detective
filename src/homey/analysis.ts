@@ -230,6 +230,7 @@ export function analyse(
     names,
     heatPumpLoadIds,
     baseloadW,
+    baseloadFullDay: fullAccounts.length > 0,
     avgPrice,
     currency: s.currency,
     price: prices.priceAt(s.flatPrice),

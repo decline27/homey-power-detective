@@ -35,6 +35,8 @@ export interface FindingInputs {
   heatPumpLoadIds: string[];
   /** Always-on power (W), from the day ledger. */
   baseloadW: number | null;
+  /** False when it comes from a partial day: a few evening hours are not "never" (default true). */
+  baseloadFullDay?: boolean;
   /** Average price per kWh over the period, for monthly figures. */
   avgPrice: number | null;
   currency: string;
@@ -124,17 +126,20 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
 
   if (inp.baseloadW !== null && inp.baseloadW >= limits.MIN_BASE_W) {
     const kWh = (inp.baseloadW * 24 * 30) / 1000;
+    const fullDay = inp.baseloadFullDay !== false;
     out.push({
       id: 'base-load',
       kind: 'base-load',
-      title: `The house never draws less than ${round(inp.baseloadW, -1)} W`,
+      title: fullDay
+        ? `The house never draws less than ${round(inp.baseloadW, -1)} W`
+        : `So far the house has not drawn less than ${round(inp.baseloadW, -1)} W`,
       detail:
         `Always-on loads (network, standby, fridges and freezers, circulation pumps, heating cables) take ${round(kWh)} kWh a month` +
         `${cost(kWh) === null ? '' : `, about ${money(cost(kWh), inp.currency)}`}. Each 10 W always on is 88 kWh a year.`,
       kWhPerMonth: kWh,
       costPerMonth: cost(kWh),
       savingPerMonth: null,
-      confidence: 'high',
+      confidence: fullDay ? 'high' : 'low',
     });
   }
 
