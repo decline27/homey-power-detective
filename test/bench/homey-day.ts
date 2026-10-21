@@ -2,7 +2,9 @@
  * Benchmark on Kjetil's own house: 6 h of Homey Insights minute data from the Tibber Pulse
  * (current per phase, total power). Judge: the heat pump's runs as MELCloud reports them
  * (independent of the Pulse), plus the Balboa spa and the Easee charger.
- * Usage: node homey-day.js <dir with pulse_L1.json ...>
+ * Usage: node homey-day.js <dir with pulse_L1.json ...> [hr]
+ * With "hr", reads the one-hour, 5-second export (hr_L1.json, hr_L2.json, hr_L3.json, hr_power.json,
+ * hr_heatpump.json) instead of the 6-hour minute averages.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -13,15 +15,23 @@ import { intervalsFromPower, matchIntervals, sessions, asIntervals } from '../..
 const dir = process.argv[2] ?? 'bench-data/homey';
 const load = (f: string) =>
   (JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).entries as Array<{ t: string; v: number | null }>).map(e => ({ t: Date.parse(e.t), v: e.v }));
-const L = ['pulse_L1.json', 'pulse_L2.json', 'pulse_L3.json'].map(load);
-const P = load('pulse_power.json');
+const hr = process.argv[3] === 'hr';
+const L = (hr ? ['hr_L1.json', 'hr_L2.json', 'hr_L3.json'] : ['pulse_L1.json', 'pulse_L2.json', 'pulse_L3.json']).map(load);
+const P = load(hr ? 'hr_power.json' : 'pulse_power.json');
+const exists = (f: string) => fs.existsSync(path.join(dir, f));
 const V = 230;
 
 const engine = new PowerEngine('Europe/Stockholm');
 for (let i = 0; i < L[0].length; i++) {
   const t = L[0][i].t;
   const w = L.map(s => (s[i]?.v ?? NaN) * V) as [number, number, number];
-  engine.push({ t, w, total: P.find(p => p.t === t)?.v ?? undefined });
+  // The latest total at or before t (series may be sampled at slightly different times).
+  let total: number | undefined;
+  for (const p of P) {
+    if (p.t > t) break;
+    if (typeof p.v === 'number') total = p.v;
+  }
+  engine.push({ t, w, total });
 }
 const loads = engine.loads();
 console.log(`window ${new Date(L[0][0].t).toISOString()} .. ${new Date(L[0][L[0].length - 1].t).toISOString()}`);
@@ -34,9 +44,9 @@ for (const c of loads) {
   );
 }
 const refs: Reference[] = [
-  { id: 'heatpump', name: 'Heat pump (MELCloud)', intervals: intervalsFromPower(load('heatpump_power.json'), 50, 5 * 60_000) },
-  { id: 'spa', name: 'Spa (Balboa)', intervals: intervalsFromPower(load('spa_power.json'), 500, 5 * 60_000) },
-  { id: 'easee', name: 'EV charger (Easee)', intervals: intervalsFromPower(load('easee_power.json'), 500, 5 * 60_000) },
+  { id: 'heatpump', name: 'Heat pump (MELCloud)', intervals: intervalsFromPower(load(hr ? 'hr_heatpump.json' : 'heatpump_power.json'), 50, 5 * 60_000) },
+  ...(exists('spa_power.json') && !hr ? [{ id: 'spa', name: 'Spa (Balboa)', intervals: intervalsFromPower(load('spa_power.json'), 500, 5 * 60_000) }] : []),
+  ...(exists('easee_power.json') && !hr ? [{ id: 'easee', name: 'EV charger (Easee)', intervals: intervalsFromPower(load('easee_power.json'), 500, 5 * 60_000) }] : []),
 ];
 for (const r of refs) console.log(`reference ${r.id}: ${r.intervals.length} runs`);
 const matches = matchReferences(loads, refs, { tolMs: 6 * 60_000, gapMs: 60_000 });

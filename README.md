@@ -1,0 +1,83 @@
+# Power Detective (Homey app)
+
+Finds which loads use power in your house from the house meter alone (Tibber Pulse, P1/HAN
+readers), says what they cost, and proves it.
+
+- **Loads, not a graph.** Every switch-on and switch-off is found per phase and grouped into
+  loads: "1330 W on L1, 21 min every 63 min, 9.6 kWh/day". A 3-phase heat pump, a one-phase
+  floor heater and a 400 V heater of the same size look different on three phases; a single
+  total-power reading cannot tell them apart.
+- **Named by your own devices.** Devices that measure themselves (heat pump via MELCloud, EV
+  charger, smart plugs) name the loads that coincide with them, and the same match scores, live,
+  how well the house meter alone finds them.
+- **Findings in money.** Ranked by what they cost: rhythmic heaters (a thermostat-driven load
+  running day and night), heat pump short cycling, base load, loads cheaper at the day's
+  cheapest hours.
+- **Proved by a switch-off test.** For loads nothing meters: switch off what you think it is,
+  start a test, and the app checks (Poisson test against the load's own rate) whether the load
+  stopped. Confirmed loads get the name.
+- **Found loads as devices.** Add them as devices and Homey Energy shows them beside the metered
+  ones. Flows: a load started / stopped, a new finding, a load is running, start a test.
+- **AI explains, never detects.** The weekly summary is a template, or written by Claude if you
+  add an Anthropic API key, told to use only the numbers it is given.
+
+## How it works
+
+```
+house meter, every 10 s (power, current per phase)
+  -> StepDetector   steady-state segmentation per phase (Hart 1992); phase steps that start
+                    together are one change, sized by the total active power
+  -> decompose      a change where one phase falls and others rise = a running load stopping as
+                    another starts; the running loads explain it before it is split by sign
+  -> Pairer         stop + start of the same shape (cosine of per-phase steps, size ratio) = an
+                    activation
+  -> clustering     activations grouped by phases and size into loads; rhythm from the robust
+                    spread of the time between starts
+  -> analysis       names from metered devices (and user, and passed tests), day ledger
+                    (total, base load, loads, unexplained), findings, test results
+```
+
+All detection is in `src/engine` (pure TypeScript, no Homey), so the app, the tests and the
+benchmarks run the same code.
+
+## Benchmarks (the judge is not the code)
+
+`npm run bench:deddiag -- <dir>` runs on DEDDIAG house 8 (Wenninger et al., *Scientific Data*
+2021, figshare 13615073): 326 days of 3-phase mains from a German home, resampled to 10 s
+snapshots like a Swedish HAN meter. Loads and their names are learned on alternating 14-day
+blocks; the other blocks are scored against the plug meters of the dishwasher and the washing
+machine. Runs during mains-logger outages (20 % of the data) are left out and counted.
+
+| Appliance (held-out) | Precision | Recall | F1 | Energy found |
+|---|---|---|---|---|
+| Dishwasher (L3 heater) | 0.97 | 0.95 | **0.96** | 81 % (pumps are below the step size) |
+| Washing machine | 0.84 | 0.87 | **0.85** | 68 % |
+
+The target was F1 ≥ 0.90 for both: met for the dishwasher, missed for the washing machine,
+whose 2 kW heater shares its phase and size with a kettle-like load.
+
+`npm run bench:homey -- <dir>` runs on one house's Homey Insights export (6 h, one reading a
+minute, minute averages) and scores the heat pump against MELCloud's own run records. Minute
+averages smear a 4-minute compressor run over its phases, so this is a harder input than the
+live 10 s stream the app uses.
+
+Benchmark data is not in the repository (`bench-data/` is ignored).
+
+## Install
+
+```
+npm install
+npx homey app install     # or: npx homey app run
+```
+
+Open the app's settings: pick the house meter if more than one is found, set currency and a
+flat price (prices are read from the Tibber home device when present), optionally an Anthropic
+API key for the weekly summary.
+
+## Develop
+
+```
+npm test                  # unit tests with coverage
+npm run lint              # type check
+npm run validate          # homey app validate --level verified
+```
