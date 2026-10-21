@@ -30,18 +30,27 @@ export interface ReferenceSnapshot {
   tracks: Record<string, Track>;
 }
 
+/**
+ * A device that measures a load: reports power, and is not another whole-house meter, a solar
+ * inverter or a battery, nor one of `exclude` (this app's own devices, the house meter).
+ */
+export function isLoadDevice(d: DeviceLike, exclude: Set<string>): boolean {
+  if (exclude.has(d.id)) return false;
+  const power = d.capabilitiesObj?.measure_power?.value;
+  if (!Array.isArray(d.capabilities) || !d.capabilities.includes('measure_power') || typeof power !== 'number') return false;
+  if (d.energyObj?.cumulative === true || d.capabilities.includes('meter_power.imported')) return false;
+  if (d.class === 'solarpanel' || d.class === 'battery' || d.capabilities.includes('meter_power.exported')) return false;
+  return true;
+}
+
 export class ReferenceTracker {
   private tracks = new Map<string, Track>();
 
   /** Feeds the current state of the devices (call about once a minute). */
   update(now: number, devices: DeviceLike[], exclude: Set<string>): void {
     for (const d of devices) {
-      if (exclude.has(d.id)) continue;
-      const power = d.capabilitiesObj?.measure_power?.value;
-      if (!Array.isArray(d.capabilities) || !d.capabilities.includes('measure_power') || typeof power !== 'number') continue;
-      // Other whole-house meters, solar inverters and batteries are not loads.
-      if (d.energyObj?.cumulative === true || d.capabilities.includes('meter_power.imported')) continue;
-      if (d.class === 'solarpanel' || d.class === 'battery' || d.capabilities.includes('meter_power.exported')) continue;
+      if (!isLoadDevice(d, exclude)) continue;
+      const power = d.capabilitiesObj!.measure_power!.value as number;
       let tr = this.tracks.get(d.id);
       if (!tr) {
         tr = { name: d.name ?? d.id, heatPump: d.class === 'heatpump', intervals: [], open: null, lastSeen: now };

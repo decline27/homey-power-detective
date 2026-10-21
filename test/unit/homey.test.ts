@@ -141,6 +141,34 @@ describe('analysis', () => {
     expect(a.experiments[0].loadName).toBe('Kitchen floor');
   });
 
+  test('a device on nearly all the time names nothing: every load falls inside it by chance', () => {
+    const { clusterActivations } = jest.requireActual('../../src/engine/clustering');
+    // Floor heater: 21 of every 63 min for two days. Spa: 15 of every 45 min, all day.
+    const floor = Array.from({ length: 45 }, (_, i) => ({ start: T0 + i * 63 * MIN, end: T0 + (i * 63 + 21) * MIN, delta: [1330, 0, 0] as [number, number, number] }));
+    const spaOn = Array.from({ length: 64 }, (_, i) => ({ start: T0 + (i * 45 + 10) * MIN, end: T0 + (i * 45 + 25) * MIN }));
+    const m = nameFromDevices(clusterActivations(floor), [{ id: 'spa', name: 'BWA Spa', intervals: spaOn }]);
+    expect(m).toEqual([]);
+  });
+
+  test('a modulating heat pump split into several loads: every part belongs to it, an independent load does not', () => {
+    const { clusterActivations } = jest.requireActual('../../src/engine/clustering');
+    const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
+    const runs = Array.from({ length: 19 }, (_, i) => T0 + (i * 150 + 30) * MIN);
+    const main = runs.map(s => ({ start: s, end: s + 60 * MIN, delta: v(200, 200, 200) }));
+    // The compressor ramps up for 15 minutes in every fourth run: a second, shorter, rarer load.
+    const boost = runs.filter((_, i) => i % 4 === 0).map(s => ({ start: s + 20 * MIN, end: s + 35 * MIN, delta: v(300, 300, 300) }));
+    const floor = Array.from({ length: 45 }, (_, i) => ({ start: T0 + i * 63 * MIN, end: T0 + (i * 63 + 21) * MIN, delta: v(1330, 0, 0) }));
+    const loads = clusterActivations([...main, ...boost, ...floor]);
+    const melcloud = runs.map(s => ({ start: s + 3 * MIN, end: s + 63 * MIN }));
+    const m = nameFromDevices(loads, [{ id: 'hp', name: 'Värmepump', intervals: melcloud }]);
+    const named = new Set(m.flatMap(x => x.clusterIds));
+    const idOf = (w: number) => loads.find((l: any) => Math.abs(l.medianW - w) < 50)!.id;
+    expect(named.has(idOf(600))).toBe(true);
+    expect(named.has(idOf(900))).toBe(true);
+    expect(named.has(idOf(1330))).toBe(false);
+    expect(m.every(x => x.referenceId === 'hp')).toBe(true);
+  });
+
   test('programme mode: a plug-metered appliance whose heater is a part of the run', () => {
     const dishAct = [0, 1, 2, 3, 4].flatMap(d => [
       { start: T0 + d * 86_400_000, end: T0 + d * 86_400_000 + 8 * MIN, delta: [0, 0, 2900] as [number, number, number] },

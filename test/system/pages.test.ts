@@ -128,6 +128,11 @@ maybe('settings page: shows what was found, and every action lands in the app', 
   expect(await text(page, '#loads')).toMatch(/every 6\d min/);
   expect(await text(page, '#loads')).toMatch(/matches Värmepump \(F1 0\.\d+\)/);
   expect(await text(page, '#validation')).toContain('Värmepump');
+  // The energy account: the chart's legend names the metered heat pump; the device card says
+  // what was learned about it (MELCloud reports minutes late: counted by energy, not subtracted).
+  expect(await text(page, '#legend')).toContain('Värmepump');
+  expect(await text(page, '#metered')).toMatch(/Värmepump[\s\S]*energy only/);
+  expect(await text(page, '#metered')).toMatch(/3[\s\S]*min late/);
   expect(await page.locator('#meter option').count()).toBe(2);
   // Fits a phone: nothing wider than the screen.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(380);
@@ -178,6 +183,7 @@ maybe('widget while the floor runs: live total, the load by name, fits its tile 
     expect(await text(page, '#total')).toBe(`${total.toLocaleString('en-US')}W`);
     expect(await text(page, '#rows')).toMatch(/Kitchen floor · 5 min\s+1,3[34]0 W/);
     expect(await text(page, '#rows')).toMatch(/Always on/);
+    expect(await text(page, '#rows')).not.toMatch(/NaN/);
     expect(await page.locator('#bar > div').count()).toBeGreaterThanOrEqual(2);
     expect(await text(page, '#finding')).toMatch(/NOK\/month/);
     // The tile is 360 px high (widget.compose.json); the content must fit without scrolling.

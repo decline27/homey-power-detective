@@ -7,9 +7,15 @@ readers), says what they cost, and proves it.
   loads: "1330 W on L1, 21 min every 63 min, 9.6 kWh/day". A 3-phase heat pump, a one-phase
   floor heater and a 400 V heater of the same size look different on three phases; a single
   total-power reading cannot tell them apart.
-- **Named by your own devices.** Devices that measure themselves (heat pump via MELCloud, EV
-  charger, smart plugs) name the loads that coincide with them, and the same match scores, live,
-  how well the house meter alone finds them.
+- **Uses what you already meter.** Devices that measure themselves (EV charger, spa, smart
+  plugs, heat pump via MELCloud) are found on the house meter by themselves: the app learns each
+  one's phases and reporting delay from the Pulse. Fast reporters are taken out of the house
+  meter live, so detection only has to find what nothing meters; slow ones (MELCloud, minutes
+  late) are counted by their energy and name the loads that coincide with them, but only when
+  the match is unlikely by chance (binomial test against the device's runs shifted out of phase).
+- **Every kWh accounted for.** Each day is an energy account that adds up to the house meter:
+  metered devices (exact), found loads, always-on, heating explained by outdoor temperature
+  (degree-day regression, base 17 °C), and what is left unexplained.
 - **Findings in money.** Ranked by what they cost: rhythmic heaters (a thermostat-driven load
   running day and night), heat pump short cycling, base load, loads cheaper at the day's
   cheapest hours.
@@ -25,6 +31,9 @@ readers), says what they cost, and proves it.
 
 ```
 house meter, every 10 s (power, current per phase)
+  -> house days     the raw meter: what the account must add up to
+  -> metered        each metered device's change found on the meter: phases + delay learned;
+                    devices reporting within 20 s subtracted live (switched over only while off)
   -> StepDetector   steady-state segmentation per phase (Hart 1992); phase steps that start
                     together are one change, sized by the total active power
   -> decompose      a change where one phase falls and others rise = a running load stopping as
@@ -33,9 +42,12 @@ house meter, every 10 s (power, current per phase)
                     activation
   -> clustering     activations grouped by phases and size into loads; rhythm from the robust
                     spread of the time between starts
-  -> analysis       names from metered devices (and user, and passed tests), day ledger
-                    (total, base load, loads, unexplained), findings, test results
+  -> analysis       names from metered devices (and user, and passed tests), energy account
+                    (meters, loads, always-on, weather heating, unexplained), findings, tests
 ```
+
+A run far longer than its load ever runs (beyond Q3 + 3 IQR + 10 min of its run lengths) is a
+missed stop: its energy counts at the load's median length, and it no longer shows as running.
 
 All detection is in `src/engine` (pure TypeScript, no Homey), so the app, the tests and the
 benchmarks run the same code.
@@ -109,7 +121,10 @@ load driver and its devices. The house keeps the ground truth, and that is the j
 |---|---|
 | `house.test.ts` | A week, step by step: loads found unaided (floor heater and heat pump found every time on runs not switching together with another load; F1 ≥ 0.95 / ≥ 0.85 overall), named from the metered device, price and base load right, findings announced once; flows fire for the right load; naming; the widget; a paired device meters its runs within 5 %; a switch-off test confirms the right load and rejects a wrong guess; a restart mid-run keeps ids, names and the run; one weekly summary. |
 | `failures.test.ts` | Homey API not ready at boot, two meters and no choice, a meter without phase data, the Pulse going quiet, garbage values, a corrupt saved state, no driver. |
+| `account.test.ts` | A house where much is metered (Easee at once, spa 10 s late, a modulating heat pump through MELCloud 3 min late) plus radiators following the outdoor temperature: the fast devices learned and subtracted, MELCloud not; the floor heater found every time while the car charges; every day adds up to the house meter, device rows equal their meters, nothing counted twice; the heating estimate equals the radiators' energy within 15 % and always-on the true base; the widget lists each device once and no stale runs. |
 | `pages.test.ts` | The settings page and the widget in Chromium, wired to the running app: what they show, that naming, tests, settings and the summary button land in the app, both themes, phone width, the widget fitting its 360 px tile. Skipped when no Chromium is found (`PD_CHROMIUM` or Playwright's). |
 
-Known limit, measured here: two loads switching within the same few seconds are seen as one
-change; in the simulated house that costs the heat pump 2 of 19 runs over two days.
+Known limits, measured here: two loads switching within the same few seconds are seen as one
+change; in the simulated house that costs the heat pump 2 of 19 runs over two days. A switch-off
+hidden by a heat pump's power step is a missed stop: in the metered house, the floor heater's
+energy came out 5.8 % low over the first two days from one such miss.

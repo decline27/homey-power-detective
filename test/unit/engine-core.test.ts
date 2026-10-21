@@ -213,6 +213,31 @@ describe('clustering', () => {
   });
 });
 
+describe('missed stops (runs far longer than the load runs)', () => {
+  const act2 = (start: number, minutes: number, delta: Vec3): Activation => ({ start, end: start + minutes * MIN, delta });
+  // 40 floor-heater runs of 21 min, 6 of them with a missed stop (147 min): 15 % bad, beyond a p90.
+  const runs = Array.from({ length: 40 }, (_, i) => act2(T0 + i * 63 * MIN, i % 7 === 3 ? 147 : 21, [1330, 0, 0]));
+
+  test('the plausible run length is a robust bound (Q3 + 3 IQR + 10 min), not fooled by the bad runs', () => {
+    const [c] = clusterActivations(runs);
+    expect(c.maxMinutes).toBeCloseTo(31, 0);
+  });
+
+  test('daily energy counts a missed-stop run at the typical length', () => {
+    const [c] = clusterActivations(runs, { from: T0, to: T0 + 40 * 63 * MIN });
+    const days = (40 * 63) / 1440;
+    expect(c.kWhPerDay).toBeCloseTo((40 * 1330 * 21) / 60 / 1000 / days, 1);
+  });
+
+  test('loads whose runs vary a lot keep their long runs (an EV charging 30 min to 6 h)', () => {
+    const ev = [30, 60, 90, 120, 180, 240, 300, 360, 45, 150].map((m, i) => act2(T0 + i * 24 * 60 * MIN, m, [3680, 3680, 3680]));
+    const [c] = clusterActivations(ev);
+    expect(c.maxMinutes).toBeGreaterThanOrEqual(360);
+    const kWh = ev.reduce((s, a) => s + activationKWh(a), 0);
+    expect(c.kWhPerDay * ((ev[ev.length - 1].end - ev[0].start) / 86_400_000)).toBeCloseTo(kWh, 6);
+  });
+});
+
 describe('PowerEngine end to end (synthetic house)', () => {
   // Kitchen floor: 1330 W on L1, 21 min every 63 min. Heat pump: 3-phase 850 W, 4 min, often
   // starting in the same reading as the floor heating stops.
@@ -257,7 +282,7 @@ describe('PowerEngine end to end (synthetic house)', () => {
 
 describe('LoadRegistry (stable ids)', () => {
   const cluster = (id: string, share: Vec3, medianW: number, kWhPerDay = 1): LoadCluster => ({
-    id, phases: 'L1', share, medianW, medianMinutes: 20, p90Minutes: 25, count: 10, startsPerDay: 20, kWhPerDay,
+    id, phases: 'L1', share, medianW, medianMinutes: 20, p90Minutes: 25, maxMinutes: 35, count: 10, startsPerDay: 20, kWhPerDay,
     periodMinutes: 60, periodCv: 0.1, rhythmic: true, activations: [],
   });
 

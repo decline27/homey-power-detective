@@ -102,7 +102,15 @@ function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster
   const acts = [...g.members].sort((x, y) => x.start - y.start);
   const watts = acts.map(activationW);
   const minutes = acts.map(a => (a.end - a.start) / 60_000);
-  const kWh = acts.reduce((s, a) => s + activationKWh(a), 0);
+  const sorted = [...minutes].sort((x, y) => x - y);
+  const q = (p: number) => sorted[Math.floor(p * (sorted.length - 1))];
+  const maxMinutes = q(0.75) + 3 * (q(0.75) - q(0.25)) + cfg.DURATION_SLACK_MIN;
+  const medianMinutes = median(minutes);
+  // A missed stop makes a run far longer than the load runs: count it at the median length.
+  const kWh = acts.reduce((s, a) => {
+    const m = (a.end - a.start) / 60_000;
+    return s + (m > maxMinutes ? (activationW(a) * medianMinutes) / 60_000 : activationKWh(a));
+  }, 0);
   const span = window ? window.to - window.from : acts[acts.length - 1].end - acts[0].start;
   const spanDays = Math.max(span / 86_400_000, 1 / 24);
   const gaps = acts.slice(1).map((a, i) => (a.start - acts[i].start) / 60_000);
@@ -120,8 +128,9 @@ function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster
     phases,
     share: g.share,
     medianW,
-    medianMinutes: median(minutes),
-    p90Minutes: [...minutes].sort((x, y) => x - y)[Math.min(minutes.length - 1, Math.floor(minutes.length * 0.9))],
+    medianMinutes,
+    p90Minutes: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))],
+    maxMinutes,
     count: acts.length,
     startsPerDay: acts.length / spanDays,
     kWhPerDay: kWh / spanDays,

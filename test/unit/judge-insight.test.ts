@@ -1,6 +1,6 @@
 import { clusterActivations } from '../../src/engine/clustering';
 import { DayMeter, HIST_BINS, localDate, percentileW } from '../../src/engine/day-meter';
-import { matchReferences } from '../../src/engine/labels';
+import { binomialTail, matchReferences } from '../../src/engine/labels';
 import { fits, learnProfile, learnRunFilter, passes, runsOf } from '../../src/engine/profile';
 import { energyRatio, intervalsFromPower, makeScore, matchIntervals, sessions } from '../../src/engine/score';
 import { Activation, Vec3 } from '../../src/engine/types';
@@ -47,6 +47,17 @@ describe('score', () => {
     ]);
     expect(energyRatio(5, 10)).toBe(0.5);
     expect(energyRatio(5, 0)).toBeNull();
+  });
+});
+
+describe('binomial tail (is a match better than chance?)', () => {
+  test('P(X >= k) for n trials at chance p', () => {
+    expect(binomialTail(16, 16, 0.73)).toBeCloseTo(0.73 ** 16, 12);
+    expect(binomialTail(0, 10, 0.3)).toBe(1);
+    expect(binomialTail(3, 3, 1)).toBe(1);
+    expect(binomialTail(1, 3, 0)).toBe(0);
+    // 8 of 10 at p = 0.5: (45 + 10 + 1) / 1024.
+    expect(binomialTail(8, 10, 0.5)).toBeCloseTo(56 / 1024, 12);
   });
 });
 
@@ -157,6 +168,17 @@ describe('ledger and findings', () => {
     expect(l.loads[0].kWh).toBeCloseTo((1330 * 21 * 23) / 60 / 1000, 1);
     expect(l.loads[0].cost).not.toBeNull();
     expect(l.explainedShare).toBeGreaterThan(0.95);
+  });
+
+  test('a run far longer than the load ever runs is a missed stop: counted at the typical length', () => {
+    const withMiss = [...heater.slice(0, 22), act(heater[22].start, 147, [1330, 0, 0])];
+    const l2 = clusterActivations([...withMiss, ...hp], { from: T0, to: T0 + 24 * H });
+    const m = new DayMeter('UTC');
+    m.push(T0, 300);
+    m.push(T0 + 60_000, 300);
+    const row = buildDayLedger(m.all()[0], l2, { start: T0, end: T0 + 48 * H }).loads.find(r => r.loadId.startsWith('L1'))!;
+    expect(row.kWh).toBeCloseTo((1330 * 21 * 23) / 60 / 1000, 1);
+    expect(row.activations).toBe(23);
   });
 
   test('findings: the rhythmic heater, short cycling and the base load, ranked by money', () => {

@@ -39,6 +39,11 @@ export interface LoadCluster {
   medianMinutes: number;
   /** 90th percentile of the run length (minutes): how long the load's long runs last. */
   p90Minutes: number;
+  /**
+   * Longest plausible run (minutes): Q3 + 3 IQR + 10 min of the run lengths (Tukey's far-out
+   * fence). A longer run is a missed stop; its energy counts at the median length.
+   */
+  maxMinutes: number;
   count: number;
   /** Activations per day over the observed span. */
   startsPerDay: number;

@@ -1,20 +1,25 @@
 /**
  * Power Detective: finds which loads use power in the house from the house meter alone.
  *
- *   house meter (live)  --10 s-->  PowerEngine  --steps/activations-->  flows, load devices
- *   metered devices     --1 min->  ReferenceTracker  (names loads, judges the engine)
- *   price device        --1 h--->  PriceBook
- *   every 5 min: analyse() -> settings page, findings, test results; state saved to /userdata
+ *   house meter (live) --10 s--> house days (raw)
+ *                              └─> MeteredDevices: learn each device's phases and delay,
+ *                                  subtract the fast ones ──> PowerEngine ──> flows, load devices
+ *   metered devices (live power, counters each minute) ──> MeteredDevices, ReferenceTracker
+ *   price, outdoor temperature (each minute) ──> PriceBook, TemperatureBook
+ *   every 5 min: analyse() -> energy account, findings, tests, settings page; state saved
  */
 import Homey from 'homey';
 import * as fs from 'fs';
 import { classify } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
 import { Activation, StepEvent, activationKWh, activationW } from './src/engine/types';
-import { Analysis, UserSettings, analyse, displayName } from './src/homey/analysis';
+import { DayMeter, DayRecord } from './src/engine/day-meter';
+import { Analysis, UserSettings, analyse, displayName, runningNow } from './src/homey/analysis';
+import { MeteredDevices } from './src/homey/metered';
+import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
 import { PRICE_CAPABILITIES, PriceBook } from './src/homey/prices';
-import { ReferenceTracker } from './src/homey/references';
+import { ReferenceTracker, isLoadDevice } from './src/homey/references';
 import { Experiment, hoursNeeded } from './src/insight/experiments';
 import { SummaryInput, summarize } from './src/insight/summary';
 
@@ -44,13 +49,24 @@ interface SavedState {
   prices: unknown;
   findingsSeen: string[];
   summaryAt: number;
+  metered?: unknown;
+  house?: DayRecord[];
+  temps?: unknown;
 }
+
+/** Devices reporting outdoor temperature, best first. */
+const OUTDOOR = 'measure_temperature.outdoor';
 
 module.exports = class PowerDetectiveApp extends Homey.App {
   private api: any = null;
   private engine!: PowerEngine;
   private refs = new ReferenceTracker();
   private prices = new PriceBook();
+  private metered!: MeteredDevices;
+  private house!: DayMeter;
+  private temps = new TemperatureBook();
+  /** Live power subscriptions to metered devices, by device id. */
+  private deviceInstances = new Map<string, any>();
   private latest = new Map<string, Latest>();
   private meterId: string | null = null;
   private meterName: string | null = null;
@@ -70,6 +86,10 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.engine = PowerEngine.restore(saved?.engine, this.timeZone);
     this.refs = ReferenceTracker.restore(saved?.refs);
     this.prices = PriceBook.restore(saved?.prices);
+    this.metered = MeteredDevices.restore(saved?.metered, this.timeZone);
+    this.house = new DayMeter(this.timeZone);
+    this.house.restore(Array.isArray(saved?.house) ? saved!.house : []);
+    this.temps = TemperatureBook.restore(saved?.temps);
     this.findingsSeen = new Set(Array.isArray(saved?.findingsSeen) ? saved!.findingsSeen : []);
     this.summaryAt = Number(saved?.summaryAt) || 0;
 
@@ -90,6 +110,8 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   async onUninit(): Promise<void> {
     this.timers.forEach(t => this.homey.clearInterval(t));
     this.instances.forEach(i => i?.destroy?.());
+    this.deviceInstances.forEach(i => i?.destroy?.());
+    this.deviceInstances.clear();
     this.save();
   }
 
@@ -164,7 +186,10 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       }
       return;
     }
-    const { steps, activations } = this.engine.push(reading);
+    // The house meter counts everything; detection sees what the live-metered devices leave.
+    this.house.push(reading.t, Number.isFinite(reading.total) ? (reading.total as number) : reading.w[0] + reading.w[1] + reading.w[2]);
+    this.metered.observe(reading);
+    const { steps, activations } = this.engine.push(this.metered.residual(reading));
     steps.filter(s => s.delta[0] + s.delta[1] + s.delta[2] > 0).forEach(s => this.onStart(s));
     activations.forEach(a => this.onStop(a));
   }
@@ -219,10 +244,39 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     const own = new Set(devices.filter(d => d.driverId?.includes('com.decline27.powerdetective')).map(d => d.id));
     if (this.meterId) own.add(this.meterId);
     this.refs.update(now, devices, own);
+    this.trackMetered(devices, own, now);
+    const outdoor =
+      devices.find(d => d.class === 'heatpump' && typeof d.capabilitiesObj?.[OUTDOOR]?.value === 'number') ??
+      devices.find(d => typeof d.capabilitiesObj?.[OUTDOOR]?.value === 'number');
+    if (outdoor) this.temps.record(now, outdoor.capabilitiesObj![OUTDOOR]!.value as number);
     const priced = devices.find(d => PRICE_CAPABILITIES.some(c => typeof d.capabilitiesObj?.[c]?.value === 'number'));
     if (priced) {
       const cap = PRICE_CAPABILITIES.find(c => typeof priced.capabilitiesObj?.[c]?.value === 'number') as string;
       this.prices.record(now, priced.capabilitiesObj![cap]!.value as number);
+    }
+  }
+
+  /**
+   * Metered devices: live power by subscription (its timing decides whether a device can be
+   * subtracted), polled when a device cannot be subscribed to; energy counters each minute.
+   */
+  private trackMetered(devices: DeviceLike[], own: Set<string>, now: number): void {
+    for (const d of devices) {
+      if (!isLoadDevice(d, own)) continue;
+      const name = d.name ?? d.id;
+      const power = d.capabilitiesObj!.measure_power!.value as number;
+      const counter = d.capabilitiesObj?.meter_power?.value;
+      if (typeof counter === 'number') this.metered.counter(d.id, counter, now);
+      if (this.deviceInstances.has(d.id)) continue;
+      this.metered.power(d.id, name, power, now);
+      const make = (d as { makeCapabilityInstance?: (cap: string, fn: (v: number) => void) => unknown }).makeCapabilityInstance;
+      if (typeof make !== 'function') continue;
+      try {
+        const inst = make.call(d, 'measure_power', (v: number) => this.metered.power(d.id, name, v, Date.now()));
+        this.deviceInstances.set(d.id, inst);
+      } catch (e) {
+        this.error('Subscribe', d.id, e);
+      }
     }
   }
 
@@ -243,7 +297,11 @@ module.exports = class PowerDetectiveApp extends Homey.App {
 
   async refresh(): Promise<Analysis> {
     const now = Date.now();
-    this.analysis = analyse(this.engine, this.refs.references(), this.refs.heatPumpIds(), this.prices, this.userSettings(), now);
+    this.analysis = analyse(this.engine, this.refs.references(), this.refs.heatPumpIds(), this.prices, this.userSettings(), now, {
+      house: this.house.all(),
+      metered: this.metered,
+      temps: this.temps,
+    });
     for (const f of this.analysis.findings) {
       if (this.findingsSeen.has(f.id)) continue;
       this.findingsSeen.add(f.id);
@@ -292,10 +350,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   /** Whether a load is running now, from the live starts (not the last analysis). */
   isRunning(loadId: string): boolean {
     if (!this.analysis) return false;
-    const now = Date.now();
-    return this.engine
-      .running()
-      .some(st => classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, this.analysis!.clusters)?.id === loadId);
+    return runningNow(this.engine, this.analysis.clusters, Date.now()).some(x => x.cluster?.id === loadId);
   }
 
   async writeSummary(notify: boolean): Promise<{ text: string; source: string; error?: string }> {
@@ -326,31 +381,54 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     const now = Date.now();
     const a = this.analysis;
     const total = this.latest.get('measure_power');
-    const running = a
-      ? this.engine
-          .running()
-          .map(st => {
-            const c = classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, a.clusters);
-            const load = c ? a.loads.find(l => l.id === c.id) : undefined;
+    // Devices with their own meter, by name, at their own reading.
+    const meteredNow = this.metered.running(now);
+    // A found load matched to a device with its own meter is shown by that meter only: when the
+    // meter says off, it is off (a stale start of one of its parts is not).
+    const meteredIds = new Set(this.metered.status().map(d => d.id));
+    const metered = meteredNow.map(d => ({ name: d.name as string | null, w: Math.round(d.w), since: null as number | null, metered: true }));
+    // Found loads, except those that are a metered device.
+    const found = a
+      ? runningNow(this.engine, a.clusters, now)
+          .map(x => {
+            const load = x.cluster ? a.loads.find(l => l.id === x.cluster!.id) : undefined;
             return {
+              deviceId: load?.deviceId ?? null,
               name: load ? displayName(load) : null,
-              w: Math.round(st.delta[0] + st.delta[1] + st.delta[2]),
-              since: st.t,
+              w: Math.round(x.w),
+              since: x.t as number | null,
+              metered: false,
             };
           })
-          .filter(r => r.w > 0)
-          .sort((x, y) => y.w - x.w)
+          .filter(r => r.w > 0 && !(r.deviceId && meteredIds.has(r.deviceId)))
+          .map(({ deviceId: _d, ...r }) => r)
       : [];
-    const days = a?.days ?? [];
-    const today = days[days.length - 1] ?? null;
-    const lastFull = [...days].reverse().find(d => d.coveredHours >= 20) ?? today;
+    // One entry per name: the parts of one device (a modulating heat pump) are one device.
+    const byName = new Map<string, (typeof found)[number]>();
+    const unnamed: typeof found = [];
+    for (const r of [...metered, ...found]) {
+      if (!r.name) {
+        unnamed.push(r);
+        continue;
+      }
+      const prev = byName.get(r.name);
+      if (!prev) byName.set(r.name, { ...r });
+      else {
+        prev.w += r.w;
+        prev.since = prev.since === null || r.since === null ? null : Math.min(prev.since, r.since);
+      }
+    }
+    const running = [...byName.values(), ...unnamed].sort((x, y) => y.w - x.w);
+    const accounts = a?.accounts ?? [];
+    const today = accounts[accounts.length - 1] ?? null;
+    const lastFull = [...accounts].reverse().find(d => d.coveredHours >= 20) ?? today;
     const top = a?.findings[0] ?? null;
     return {
       status: this.status,
       observedHours: a?.observedHours ?? 0,
       currency: this.userSettings().currency,
       totalW: total && now - total.at < 120_000 ? Math.round(total.value) : null,
-      baseW: lastFull?.baseloadW ?? null,
+      baseW: lastFull?.alwaysOnW ?? null,
       running,
       today: today ? { kWh: today.totalKWh, explainedShare: today.explainedShare } : null,
       top: top ? { title: top.title, money: top.savingPerMonth ?? top.costPerMonth, saving: top.savingPerMonth !== null } : null,
@@ -445,6 +523,9 @@ module.exports = class PowerDetectiveApp extends Homey.App {
         prices: this.prices.snapshot(),
         findingsSeen: [...this.findingsSeen].slice(-500),
         summaryAt: this.summaryAt,
+        metered: this.metered.snapshot(),
+        house: this.house.all(),
+        temps: this.temps.snapshot(),
       };
       fs.writeFileSync(`${STATE_FILE}.tmp`, JSON.stringify(state));
       fs.renameSync(`${STATE_FILE}.tmp`, STATE_FILE);

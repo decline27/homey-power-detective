@@ -14,6 +14,7 @@
  */
 import type { Vec3 } from '../../src/engine/types';
 import type { Interval } from '../../src/engine/score';
+import { localDate } from '../../src/engine/day-meter';
 
 export const SEC = 1000;
 export const MIN = 60 * SEC;
@@ -31,6 +32,10 @@ export interface SimLoad {
   schedule(t: number): boolean;
   /** False while the user has it switched off (a switch-off test). */
   enabled: boolean;
+  /** Scales `w` over time (a modulating heat pump, radiators following the weather). */
+  profile?: (t: number) => number;
+  /** A Homey device that meters this load, reporting `lagMs` late (MELCloud: minutes). */
+  meter?: { deviceId: string; lagMs: number; standbyW?: number };
 }
 
 /** On for `onMin` at the start of every `periodMin`, from `offsetMin` after START. */
@@ -47,8 +52,17 @@ export const daily = (runs: Array<[number, number, number]>) => (t: number) => {
 
 export class SimHouse {
   base: Vec3 = [180, 140, 90];
+  /** Outdoor temperature (°C), reported by the heat pump when set. */
+  outdoor: ((t: number) => number) | null = null;
   private seed = 7;
   constructor(public loads: SimLoad[]) {}
+
+  /** A load's power at t (W). */
+  loadW(key: string, t: number): number {
+    const l = this.load(key);
+    if (!l.enabled || !l.schedule(t)) return 0;
+    return (l.w[0] + l.w[1] + l.w[2]) * (l.profile ? l.profile(t) : 1);
+  }
 
   load(key: string): SimLoad {
     const l = this.loads.find(x => x.key === key);
@@ -71,7 +85,8 @@ export class SimHouse {
     const w: Vec3 = [this.base[0] + this.noise(), this.base[1] + this.noise(), this.base[2] + this.noise()];
     for (const l of this.loads) {
       if (!l.enabled || !l.schedule(t)) continue;
-      for (let k = 0; k < 3; k++) w[k] += l.w[k];
+      const f = l.profile ? l.profile(t) : 1;
+      for (let k = 0; k < 3; k++) w[k] += l.w[k] * f;
     }
     return { w, total: w[0] + w[1] + w[2] };
   }
@@ -99,10 +114,46 @@ export class SimHouse {
 export function referenceHouse(): SimHouse {
   return new SimHouse([
     { key: 'floor', w: [1330, 0, 0], schedule: cycle(63, 21), enabled: true },
-    { key: 'heatpump', w: [310, 300, 320], schedule: cycle(150, 45, 30), enabled: true },
+    { key: 'heatpump', w: [310, 300, 320], schedule: cycle(150, 45, 30), enabled: true, meter: { deviceId: 'hp', lagMs: 3 * MIN, standbyW: 15 } },
     { key: 'kettle', w: [0, 2000, 0], schedule: daily([[7, 10, 3], [12, 32, 3], [18, 4, 3]]), enabled: true },
     { key: 'oven', w: [0, 0, 1800], schedule: daily([[17, 15, 40]]), enabled: true },
   ]);
+}
+
+/** Mean outdoor temperature per day (°C), for ten days, with a daily swing of ±3 °C. */
+export const DAY_TEMPS = [8, 2, 12, 5, -2, 10, 4, 0, 7, 3];
+export const outdoorAt = (t: number) => {
+  const day = Math.floor((t - START) / (24 * HOUR));
+  const hour = ((t - START) / HOUR) % 24;
+  return DAY_TEMPS[Math.min(DAY_TEMPS.length - 1, Math.max(0, day))] + 3 * Math.sin((2 * Math.PI * (hour - 9)) / 24);
+};
+
+/**
+ * A house where much is metered already, as in Kjetil's: an Easee charger (reports at once) and
+ * a spa (10 s late) to subtract live; the heat pump modulating and reported by MELCloud 3 min
+ * late (energy only); and, unmetered, the floor heater, kettle, oven, and radiators that follow
+ * the outdoor temperature smoothly (no steps to detect: heating the account must estimate).
+ */
+export function meteredHouse(): SimHouse {
+  const h = new SimHouse([
+    { key: 'floor', w: [1330, 0, 0], schedule: cycle(63, 21), enabled: true },
+    { key: 'kettle', w: [0, 2000, 0], schedule: daily([[7, 10, 3], [12, 32, 3], [18, 4, 3]]), enabled: true },
+    { key: 'oven', w: [0, 0, 1800], schedule: daily([[17, 15, 40]]), enabled: true },
+    { key: 'ev', w: [3680, 3680, 3680], schedule: daily([[1, 40, 150], [18, 20, 100]]), enabled: true, meter: { deviceId: 'easee', lagMs: 0 } },
+    { key: 'spa', w: [0, 3000, 0], schedule: cycle(45, 15, 10), enabled: true, meter: { deviceId: 'spa', lagMs: 10 * SEC, standbyW: 15 } },
+    {
+      key: 'heatpump',
+      w: [500, 500, 500],
+      schedule: cycle(150, 60, 30),
+      enabled: true,
+      // Modulates between 40 % and 120 % in 5-minute steps, as an inverter compressor does.
+      profile: t => 0.4 + 0.8 * ((Math.floor((t - START) / (5 * MIN)) * 37) % 11) / 10,
+      meter: { deviceId: 'hp', lagMs: 3 * MIN, standbyW: 15 },
+    },
+    { key: 'radiators', w: [0, 0, 1], schedule: () => true, enabled: true, profile: t => 60 * Math.max(0, 17 - outdoorAt(t)) },
+  ]);
+  h.outdoor = outdoorAt;
+  return h;
 }
 
 // ---- Homey's devices, as homey-api returns them ------------------------------------------------
@@ -164,6 +215,10 @@ export function plainDevice(id: string, name: string, cls: string, caps: Record<
     driverId: `homey:app:other:${cls}`,
     capabilities: Object.keys(caps),
     capabilitiesObj: Object.fromEntries(Object.entries(caps).map(([k, v]) => [k, { value: v }])) as Record<string, { value: number }>,
+    makeCapabilityInstance: (cap: string, fn: Listener) => {
+      world.listeners.set(`${id}:${cap}`, fn);
+      return { destroy: () => world.listeners.delete(`${id}:${cap}`) };
+    },
   };
 }
 
@@ -172,6 +227,18 @@ export function standardDevices(): void {
   world.devices = {
     pulse: meterDevice('pulse', 'Pulse'),
     hp: plainDevice('hp', 'Värmepump', 'heatpump', { measure_power: 15 }),
+    home: plainDevice('home', 'Hemma', 'other', { measure_price_total: 1.8 }),
+    inverter: plainDevice('inverter', 'Solceller', 'solarpanel', { measure_power: 900 }),
+  };
+}
+
+/** Kjetil-like: also an Easee charger and a spa with their own meters, the heat pump with an energy counter and outdoor temperature. */
+export function meteredDevices(): void {
+  world.devices = {
+    pulse: meterDevice('pulse', 'Pulse'),
+    hp: plainDevice('hp', 'Värmepump', 'heatpump', { measure_power: 15, meter_power: 40, 'measure_temperature.outdoor': 8 }),
+    easee: plainDevice('easee', 'Easee ladder', 'evcharger', { measure_power: 0, meter_power: 12000 }),
+    spa: plainDevice('spa', 'BWA Spa', 'thermostat', { measure_power: 15, meter_power: 28 }),
     home: plainDevice('home', 'Hemma', 'other', { measure_price_total: 1.8 }),
     inverter: plainDevice('inverter', 'Solceller', 'solarpanel', { measure_power: 900 }),
   };
@@ -283,6 +350,8 @@ export class Sim {
   pulseOnline = true;
   meterId = 'pulse';
   private last = new Map<string, number>();
+  /** Ground truth energy (kWh) by local date: 'house', each load key, and 'device:<id>' as reported. */
+  truth = new Map<string, Map<string, number>>();
 
   constructor(public house: SimHouse, public homey: FakeHomey) {}
 
@@ -310,13 +379,43 @@ export class Sim {
         world.listeners.get(key)?.(v);
       }
     }
+    const date = localDate(t, 'Europe/Stockholm');
+    const add = (key: string, w: number) => {
+      const day = this.truth.get(date) ?? new Map<string, number>();
+      this.truth.set(date, day);
+      day.set(key, (day.get(key) ?? 0) + (w * TICK) / 3.6e9);
+    };
+    add('house', total);
+    for (const l of this.house.loads) {
+      add(l.key, this.house.loadW(l.key, t));
+      const m = l.meter;
+      const dev = m && world.devices[m.deviceId];
+      if (!m || !dev) continue;
+      // The device's own view, `lagMs` late; its counter integrates what it reports.
+      const v = Math.round(this.house.loadW(l.key, t - m.lagMs) || (m.standbyW ?? 0));
+      dev.capabilitiesObj.measure_power = { value: v, lastUpdated: iso };
+      if (dev.capabilitiesObj.meter_power) dev.capabilitiesObj.meter_power.value += (v * TICK) / 3.6e9;
+      add(`device:${m.deviceId}`, v);
+      const key = `${m.deviceId}:measure_power`;
+      if (this.last.get(key) !== v) {
+        this.last.set(key, v);
+        world.listeners.get(key)?.(v);
+      }
+    }
     const hp = world.devices.hp;
-    if (hp) hp.capabilitiesObj.measure_power.value = this.house.isOn('heatpump', t) ? 930 : 15;
+    if (hp && this.house.outdoor && hp.capabilitiesObj['measure_temperature.outdoor']) {
+      hp.capabilitiesObj['measure_temperature.outdoor'].value = Math.round(this.house.outdoor(t) * 10) / 10;
+    }
     const home = world.devices.home;
     if (home) {
       const hour = new Date(t + 2 * HOUR).getUTCHours();
       home.capabilitiesObj.measure_price_total.value = hour >= 7 && hour < 9 ? 3.2 : hour >= 17 && hour < 20 ? 3.6 : 1.4;
     }
+  }
+
+  /** Ground-truth kWh of a key ('house', a load key, 'device:<id>') on a local date. */
+  truthKWh(date: string, key: string): number {
+    return this.truth.get(date)?.get(key) ?? 0;
   }
 
   /** Lets a listener re-fire the same value after a reconnect (a new capability instance). */

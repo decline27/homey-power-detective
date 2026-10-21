@@ -8,7 +8,7 @@
     :root {
       --bg: #f6f8f7; --card: #ffffff; --ink: #14201c; --muted: #5d6b66; --line: #e2e8e5;
       --accent: #0e7c66; --warn: #b5530b; --ok: #1f7a3a; --bad: #b42318;
-      --s1: #0e7c66; --s2: #3b82c4; --s3: #c2410c; --s4: #7c3aed; --s5: #ca8a04; --s6: #0891b2; --other: #64748b; --base: #94a3a0; --rest: #d6dcda;
+      --s1: #0e7c66; --s2: #3b82c4; --s3: #c2410c; --s4: #7c3aed; --s5: #ca8a04; --s6: #0891b2; --other: #64748b; --base: #94a3a0; --rest: #d6dcda; --weather: #f59e0b;
     }
     @media (prefers-color-scheme: dark) {
       :root { --bg: #0f1513; --card: #18201d; --ink: #e8efec; --muted: #9aa8a3; --line: #2a3531; --rest: #3a4541; --base: #6b7a76; }
@@ -48,14 +48,18 @@
 <body>
   <div id="status" class="muted">Loading…</div>
   <div class="kpis" style="margin-top:8px">
-    <div class="kpi"><b id="k-explained">–</b><span>of energy explained (7 days)</span></div>
+    <div class="kpi"><b id="k-explained">–</b><span>of energy accounted for (7 days)</span></div>
     <div class="kpi"><b id="k-kwh">–</b><span>kWh per day</span></div>
     <div class="kpi"><b id="k-base">–</b><span>always-on base load</span></div>
     <div class="kpi"><b id="k-top">–</b><span>top finding, per month</span></div>
   </div>
 
   <h2>Where the energy went</h2>
-  <div class="card"><div id="chart"></div><div id="legend" class="legend"></div></div>
+  <div class="card"><div id="chart"></div><div id="legend" class="legend"></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Devices with their own meter are exact; found loads, always-on and heating are estimated. Every day adds up to the house meter.</div></div>
+
+  <h2>Devices that meter themselves</h2>
+  <div class="card" id="metered"><span class="muted">None yet: an EV charger, heat pump, spa or smart plug appears here once Homey reports its power.</span></div>
 
   <h2>Findings</h2>
   <div id="findings"></div>
@@ -107,51 +111,70 @@
     return new Promise((res, rej) => H.api(method, path, body || null, (e, v) => e ? rej(e) : res(v)));
   }
 
-  function chart(days, loads) {
+  // The energy account per day: every kWh in one row, stacked; the rows that matter most get colours.
+  function chart(accounts) {
     const el = document.getElementById('chart');
-    if (!days.length) { el.innerHTML = '<span class="muted">Collecting the first day…</span>'; return; }
-    const top = loads.slice(0, 6).map(l => l.id);
+    const days = accounts.filter(d => d.coveredHours > 0);
+    if (!days.length) { el.innerHTML = '<span class="muted">Collecting the first day…</span>'; document.getElementById('legend').innerHTML = ''; return; }
+    const totals = new Map();
+    days.forEach(d => d.rows.forEach(row => { if (row.kind === 'metered' || row.kind === 'load') totals.set(row.key, { name: row.name, kWh: (totals.get(row.key)?.kWh || 0) + row.kWh, exact: row.exact }); }));
+    const top = [...totals.entries()].sort((a, b) => b[1].kWh - a[1].kWh).slice(0, 6).map(([k]) => k);
+    const colorOf = row => row.kind === 'always_on' ? css('--base') : row.kind === 'weather' ? css('--weather') : row.kind === 'unexplained' ? css('--rest') : top.includes(row.key) ? css(COLORS[top.indexOf(row.key)]) : css('--other');
     const W = Math.max(280, el.clientWidth || 320), Hh = 170, pad = 22, bw = (W - pad) / days.length;
-    // Scale to the tallest stack: base load plus loads can exceed the metered total on a day.
-    const stack = d => Math.max(d.totalKWh, d.baseloadKWh + d.loads.reduce((a, x) => a + x.kWh, 0) + d.unexplainedKWh);
-    const max = Math.max(...days.map(stack), 1);
+    const max = Math.max(...days.map(d => d.totalKWh), 1);
     let s = `<svg width="${W}" height="${Hh + 18}" role="img" aria-label="Energy per day">`;
     days.forEach((d, i) => {
       let y = Hh;
-      const seg = (kwh, color, title) => {
-        const h = Math.max(0, kwh / max * (Hh - 6)); y -= h;
-        s += `<rect x="${pad + i * bw + 3}" y="${y}" width="${bw - 6}" height="${h}" fill="${color}"><title>${esc(title)}: ${r(kwh, 1)} kWh</title></rect>`;
-      };
-      seg(d.baseloadKWh, css('--base'), 'Base load');
-      top.forEach((id, k) => { const row = d.loads.find(x => x.loadId === id); if (row) seg(row.kWh, css(COLORS[k]), nameOf(loads[k])); });
-      const others = d.loads.filter(x => !top.includes(x.loadId)).reduce((a, x) => a + x.kWh, 0);
-      if (others > 0) seg(others, css('--other'), 'Other loads');
-      seg(d.unexplainedKWh, css('--rest'), 'Unexplained');
+      const order = ['metered', 'load', 'always_on', 'weather', 'unexplained'];
+      [...d.rows].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).forEach(row => {
+        const h = Math.max(0, row.kWh / max * (Hh - 6)); y -= h;
+        s += `<rect x="${pad + i * bw + 3}" y="${y}" width="${bw - 6}" height="${h}" fill="${colorOf(row)}"><title>${esc(row.name)}: ${r(row.kWh, 1)} kWh${row.exact ? ' (metered)' : ''}</title></rect>`;
+      });
       s += `<text x="${pad + i * bw + bw / 2}" y="${Hh + 14}" font-size="10" text-anchor="middle" fill="${css('--muted')}">${d.date.slice(5)}</text>`;
     });
     s += `<text x="0" y="10" font-size="10" fill="${css('--muted')}">${r(max)} kWh</text></svg>`;
     el.innerHTML = s;
+    const has = kind => days.some(d => d.rows.some(x => x.kind === kind));
     document.getElementById('legend').innerHTML =
-      top.map((id, k) => `<span><i style="background:${css(COLORS[k])}"></i>${esc(nameOf(loads[k]))}</span>`).join('') +
-      `<span><i style="background:${css('--other')}"></i>Other loads</span><span><i style="background:${css('--base')}"></i>Base load</span><span><i style="background:${css('--rest')}"></i>Unexplained</span>`;
+      top.map((k, i) => `<span><i style="background:${css(COLORS[i])}"></i>${esc(totals.get(k).name)}${totals.get(k).exact ? ' (meter)' : ''}</span>`).join('') +
+      (totals.size > top.length ? `<span><i style="background:${css('--other')}"></i>Other loads</span>` : '') +
+      (has('always_on') ? `<span><i style="background:${css('--base')}"></i>Always on</span>` : '') +
+      (has('weather') ? `<span><i style="background:${css('--weather')}"></i>Heating (outdoor temperature)</span>` : '') +
+      (has('unexplained') ? `<span><i style="background:${css('--rest')}"></i>Unexplained</span>` : '');
+  }
+
+  const delay = ms => ms === null ? '' : Math.abs(ms) < 60000 ? `${Math.round(Math.abs(ms) / 1000)} s late` : `${r(Math.abs(ms) / 60000)} min late`;
+  const phasesOf = sh => sh ? ['L1', 'L2', 'L3'].map((p, k) => sh[k] > 0.15 ? `${p} ${r(sh[k] * 100)} %` : '').filter(Boolean).join(', ') : '';
+  function meteredCard(list, today) {
+    const el = document.getElementById('metered');
+    if (!list.length) return;
+    const kWh = id => { const row = today && today.rows.find(x => x.key === `device:${id}`); return row ? `${r(row.kWh, 1)} kWh` : '–'; };
+    const state = m => m.live ? '<span class="status-confirmed">subtracted live</span>'
+      : m.matches >= 3 && Math.abs(m.lagMs) > 20000 ? `energy only <span class="muted">(reports ${delay(m.lagMs)})</span>`
+      : m.misses >= 3 && m.misses > m.matches ? 'energy only <span class="muted">(not seen on the house meter)</span>'
+      : '<span class="muted">learning</span>';
+    el.innerHTML = '<table><tr><th>Device</th><th>Today</th><th>How</th><th>Phases</th></tr>' +
+      list.map(m => `<tr><td>${esc(m.name)}</td><td>${kWh(m.id)}</td><td>${state(m)}</td><td class="muted">${phasesOf(m.share)}</td></tr>`).join('') + '</table>' +
+      '<div class="muted" style="font-size:12px;margin-top:6px">A device that reports within seconds is taken out of the house meter live, so the loads nothing meters are easier to find. Slower ones (MELCloud) are counted by their energy.</div>';
   }
 
   function render(s) {
     state = s;
     const cur = s.settings.currency;
     document.getElementById('status').textContent = `${s.status}${s.meter ? '' : ''} · ${r(s.observedHours / 24, 1)} days observed`;
-    const days = s.days.filter(d => d.coveredHours > 0);
+    const days = s.accounts.filter(d => d.coveredHours > 0);
     const tot = days.reduce((a, d) => a + d.totalKWh, 0);
     const expl = days.reduce((a, d) => a + d.explainedShare * d.totalKWh, 0);
     const hours = days.reduce((a, d) => a + d.coveredHours, 0);
     document.getElementById('k-explained').textContent = tot > 0 ? `${r(expl / tot * 100)} %` : '–';
     document.getElementById('k-kwh').textContent = hours > 0 ? r(tot / hours * 24, 1) : '–';
-    const last = [...days].reverse().find(d => d.baseloadW !== null);
-    document.getElementById('k-base').textContent = last ? `${r(last.baseloadW, -1)} W` : '–';
+    const last = [...days].reverse().find(d => d.alwaysOnW !== null && d.coveredHours >= 20) || [...days].reverse().find(d => d.alwaysOnW !== null);
+    document.getElementById('k-base').textContent = last ? `${r(last.alwaysOnW, -1)} W` : '–';
     const f0 = s.findings[0];
     document.getElementById('k-top').textContent = f0 && (f0.savingPerMonth ?? f0.costPerMonth) !== null ? `${r(f0.savingPerMonth ?? f0.costPerMonth)} ${cur}` : '–';
 
-    chart(days, s.loads);
+    chart(s.accounts);
+    meteredCard(s.metered, s.accounts[s.accounts.length - 1]);
 
     document.getElementById('findings').innerHTML = s.findings.length ? s.findings.map(f => `
       <div class="card finding">

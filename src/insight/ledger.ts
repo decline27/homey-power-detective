@@ -3,6 +3,7 @@
  * always-on base took, what each found load took, and what is left unexplained. Costs use the
  * hourly price when one is known, splitting each activation across the hours it ran in.
  */
+import { CLUSTERING } from '../engine/config';
 import { DayRecord, percentileW } from '../engine/day-meter';
 import { Activation, LoadCluster, activationW } from '../engine/types';
 import { hourStart } from './time';
@@ -62,7 +63,10 @@ export function buildDayLedger(
       let kWh = 0;
       let cost: number | null = price ? 0 : null;
       let n = 0;
-      for (const a of c.activations) {
+      // A run far longer than the load ever runs is a missed stop: count it at the typical length.
+      const maxMs = (c.maxMinutes ?? CLUSTERING.MAX_DURATION_FACTOR * c.p90Minutes + CLUSTERING.DURATION_SLACK_MIN) * 60_000;
+      for (const raw of c.activations) {
+        const a = raw.end - raw.start > maxMs ? { ...raw, end: raw.start + c.medianMinutes * 60_000 } : raw;
         if (a.end <= bounds.start || a.start >= bounds.end) continue;
         const e = activationEnergy(a, bounds.start, bounds.end, price);
         kWh += e.kWh;

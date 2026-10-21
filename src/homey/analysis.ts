@@ -9,8 +9,12 @@ import { Score } from '../engine/score';
 import { LoadCluster } from '../engine/types';
 import { Experiment, ExperimentResult, evaluateExperiment } from '../insight/experiments';
 import { Finding, buildFindings } from '../insight/findings';
+import { DayRecord } from '../engine/day-meter';
+import { AccountInput, DayAccount, buildAccount } from '../insight/account';
 import { DayLedger, buildDayLedger } from '../insight/ledger';
 import { dayBounds } from '../insight/time';
+import { HeatingSignature, TemperatureBook, heatingSignature } from '../insight/weather';
+import { MeteredDevices, MeteredStatus } from './metered';
 import { PriceBook } from './prices';
 
 export const ANALYSIS = {
@@ -38,6 +42,8 @@ export interface LoadView {
   /** Where the name came from. */
   source: 'user' | 'device' | 'test' | null;
   device: string | null;
+  /** The metered device the load was matched to, if any. */
+  deviceId: string | null;
   score: Score | null;
   phases: string;
   medianW: number;
@@ -64,25 +70,54 @@ export interface Analysis {
   validation: Array<{ device: string; loads: string[]; score: Score }>;
   experiments: ExperimentView[];
   avgPrice: number | null;
+  /** Every kWh of each day, in one row: meters, found loads, always-on, heating, unexplained. */
+  accounts: DayAccount[];
+  /** What was learned about each metered device. */
+  metered: MeteredStatus[];
+  /** kWh per degree-day of otherwise unexplained energy, once the data show it. */
+  heating: HeatingSignature | null;
   /** The clusters themselves, for the live classification. */
   clusters: LoadCluster[];
 }
 
+/** What the app knows beyond the engine: the raw house meter, the metered devices, the weather. */
+export interface Sources {
+  /** Whole-house days from the raw meter (the engine sees what the live devices leave). */
+  house?: DayRecord[];
+  metered?: MeteredDevices;
+  temps?: TemperatureBook;
+}
+
 const HEAT_PUMP_NAME = /heat ?pump|värmepump|varmepump|ecodan|nibe|thermia/i;
+
+/**
+ * Loads running now: the open starts, each with the load it is. A start older than its load's
+ * longest plausible run is a missed stop, not a load still running.
+ */
+export function runningNow(engine: PowerEngine, clusters: LoadCluster[], now: number): Array<{ t: number; w: number; cluster: LoadCluster | null }> {
+  return engine
+    .running()
+    .map(st => ({ st, cluster: classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters) }))
+    .filter(x => !x.cluster || now - x.st.t <= x.cluster.maxMinutes * 60_000)
+    .map(x => ({ t: x.st.t, w: x.st.delta[0] + x.st.delta[1] + x.st.delta[2], cluster: x.cluster }));
+}
 
 export function displayName(v: { name: string | null; phases: string; medianW: number }): string {
   return v.name ?? `${Math.round(v.medianW / 10) * 10} W on ${v.phases}`;
 }
 
-/** Device matches: first as the device's own runs, then, for what is left, as parts of a programme. */
+/**
+ * Device matches: first as the device's own runs; then the loads left, as parts of a device's
+ * programme (a dishwasher's heater, a modulating heat pump's boost), also of a device already
+ * matched. A load is only tied to a device when its matches would be unlikely by chance (p ≤ 0.02).
+ */
 export function nameFromDevices(loads: LoadCluster[], refs: Reference[]): LabelMatch[] {
-  const direct = matchReferences(loads, refs, { tolMs: ANALYSIS.REFERENCE_TOL_MS, gapMs: 2 * 60_000, maxDurationRatio: 3 });
+  const direct = matchReferences(loads, refs, { tolMs: ANALYSIS.REFERENCE_TOL_MS, gapMs: 2 * 60_000, maxDurationRatio: 3, alpha: 0.02 });
   const usedLoads = new Set(direct.flatMap(m => m.clusterIds));
-  const usedRefs = new Set(direct.map(m => m.referenceId));
   const programmes = matchReferences(
     loads.filter(l => !usedLoads.has(l.id)),
-    refs.filter(r => !usedRefs.has(r.id)),
-    { tolMs: 10 * 60_000, gapMs: 45 * 60_000, maxDurationRatio: Infinity, minPrecision: 0.8 }
+    refs,
+    { tolMs: 10 * 60_000, gapMs: 45 * 60_000, maxDurationRatio: Infinity, minPrecision: 0.8, alpha: 0.02, parts: true }
   );
   return [...direct, ...programmes];
 }
@@ -93,11 +128,14 @@ export function analyse(
   heatPumpDeviceIds: string[],
   prices: PriceBook,
   s: UserSettings,
-  now: number
+  now: number,
+  sources: Sources = {}
 ): Analysis {
   const from = now - ANALYSIS.WINDOW_DAYS * 86_400_000;
   const clusters = engine.loads(from, now);
-  const matches = nameFromDevices(clusters, refs);
+  // A device subtracted live is not in what detection sees: it cannot name a load there.
+  const live = new Set((sources.metered?.status() ?? []).filter(m => m.live).map(m => m.id));
+  const matches = nameFromDevices(clusters, refs.filter(r => !live.has(r.id)));
   const byLoad = new Map<string, LabelMatch>();
   matches.forEach(m => m.clusterIds.forEach(id => byLoad.set(id, m)));
 
@@ -118,9 +156,8 @@ export function analyse(
 
   const avgPrice = prices.average(from, now, s.flatPrice);
   const running = new Set(
-    engine
-      .running()
-      .map(st => classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters)?.id)
+    runningNow(engine, clusters, now)
+      .map(x => x.cluster?.id)
       .filter((id): id is string => !!id)
   );
 
@@ -133,6 +170,7 @@ export function analyse(
       name,
       source: user ? 'user' : confirmedBy.has(c.id) ? 'test' : m ? 'device' : null,
       device: m?.referenceName ?? null,
+      deviceId: m?.referenceId ?? null,
       score: m?.score ?? null,
       phases: c.phases,
       medianW: c.medianW,
@@ -152,13 +190,40 @@ export function analyse(
     .filter(l => (byLoad.get(l.id) && heatPumpDeviceIds.includes(byLoad.get(l.id)!.referenceId)) || (l.name && HEAT_PUMP_NAME.test(l.name)))
     .map(l => l.id);
 
-  const days = engine
-    .days()
-    .slice(-ANALYSIS.LEDGER_DAYS)
-    .map(d => buildDayLedger(d, clusters, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
-  // Base load from the last complete day (today is partial).
-  const fullDays = days.filter(d => d.coveredHours >= 20);
-  const baseloadW = fullDays.length ? fullDays[fullDays.length - 1].baseloadW : days[days.length - 1]?.baseloadW ?? null;
+  const allDays = engine.days().map(d => buildDayLedger(d, clusters, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
+  const days = allDays.slice(-ANALYSIS.LEDGER_DAYS);
+  // The account: the house meter's day, the device meters, the residual's loads and base.
+  const loadName = new Map(loads.map(l => [l.id, displayName(l)]));
+  const accountInput = (l: DayLedger): AccountInput => {
+    const h = sources.house?.find(x => x.date === l.date);
+    return {
+      date: l.date,
+      totalKWh: h ? h.kWh : l.totalKWh,
+      coveredHours: h ? h.coveredMs / 3_600_000 : l.coveredHours,
+      metered: sources.metered?.energyOn(l.date) ?? [],
+      alwaysOnKWh: l.baseloadKWh,
+      alwaysOnW: l.baseloadW,
+      loads: l.loads.map(r => ({ loadId: r.loadId, name: loadName.get(r.loadId) ?? r.loadId, kWh: r.kWh, deviceId: byLoad.get(r.loadId)?.referenceId ?? null })),
+      weatherKWh: null,
+    };
+  };
+  const hddOf = (date: string) => sources.temps?.degreeDays(dayBounds(date, s.timeZone)) ?? null;
+  const points = allDays
+    .map(l => buildAccount(accountInput(l)))
+    .filter(a => a.coveredHours >= 20)
+    // What meters and found loads leave (always-on and unexplained) is what the weather may explain.
+    .map(a => ({ hdd: hddOf(a.date), kWh: a.rows.filter(r => r.kind === 'unexplained' || r.kind === 'always_on').reduce((x, r) => x + r.kWh, 0) }))
+    .filter((p): p is { hdd: number; kWh: number } => p.hdd !== null);
+  const heating = heatingSignature(points);
+  const accounts = days.map(l => {
+    const hdd = hddOf(l.date);
+    return buildAccount({ ...accountInput(l), weatherKWh: heating && hdd !== null ? heating.slope * hdd : null });
+  });
+
+  // Base load from the account's last complete day (today is partial): always-on after the
+  // weather took its share, so winter heating running all day is not called standby.
+  const fullAccounts = accounts.filter(d => d.coveredHours >= 20);
+  const baseloadW = fullAccounts.length ? fullAccounts[fullAccounts.length - 1].alwaysOnW : accounts[accounts.length - 1]?.alwaysOnW ?? null;
 
   const findings = buildFindings({
     loads: clusters,
@@ -179,12 +244,18 @@ export function analyse(
     loads,
     findings,
     days,
-    validation: matches.map(m => ({ device: m.referenceName, loads: m.clusterIds, score: m.score })),
+    // One row per device: its direct match (the programme parts only add names).
+    validation: matches
+      .filter((m, i) => matches.findIndex(x => x.referenceId === m.referenceId) === i)
+      .map(m => ({ device: m.referenceName, loads: m.clusterIds, score: m.score })),
     experiments: tests.map(({ e, r }) => {
       const l = loads.find(x => x.id === e.loadId);
       return { ...e, ...r, loadName: l ? displayName(l) : e.loadId };
     }),
     avgPrice,
+    accounts,
+    metered: sources.metered?.status() ?? [],
+    heating,
     clusters,
   };
 }
