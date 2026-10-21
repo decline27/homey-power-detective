@@ -277,6 +277,11 @@ describe('summary', () => {
     });
     expect(ok).toEqual({ text: 'Switch the kitchen floor off.', source: 'claude' });
     expect(JSON.parse(sent).system).toContain('Use only the numbers');
+    expect(JSON.parse(sent).model).toBe('claude-haiku-5-5');
+    await summarize(input, { apiKey: 'k', model: 'claude-sonnet-5-5', transport: async body => { sent = body; return { status: 500, body: '' }; } });
+    expect(JSON.parse(sent).model).toBe('claude-sonnet-5-5');
+    await summarize(input, { apiKey: 'k', model: 'gpt-4', transport: async body => { sent = body; return { status: 500, body: '' }; } });
+    expect(JSON.parse(sent).model).toBe('claude-haiku-5-5');
     expect((await summarize(input)).source).toBe('template');
     expect((await summarize(input, { apiKey: 'k', transport: async () => ({ status: 401, body: '' }) })).error).toBe('Anthropic API 401');
     expect((await summarize(input, { apiKey: 'k', transport: async () => { throw new Error('offline'); } })).error).toBe('offline');

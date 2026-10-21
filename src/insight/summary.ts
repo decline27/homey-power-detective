@@ -66,6 +66,13 @@ export function claudePrompt(s: SummaryInput): { system: string; user: string } 
   };
 }
 
+/**
+ * Models offered for the summary. Haiku is the default: the job is rewording ~2k tokens of given
+ * numbers into 120 words once a week, which needs no reasoning (about $0.02 a year at list price).
+ */
+export const SUMMARY_MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] as const;
+export const DEFAULT_SUMMARY_MODEL = SUMMARY_MODELS[0];
+
 export type Transport = (body: string, apiKey: string) => Promise<{ status: number; body: string }>;
 
 /** POST to the Anthropic Messages API. */
@@ -104,7 +111,7 @@ export async function summarize(
   if (!opts.apiKey) return { text: fallback, source: 'template' };
   const { system, user } = claudePrompt(s);
   const body = JSON.stringify({
-    model: opts.model || 'claude-sonnet-5-5',
+    model: SUMMARY_MODELS.includes(opts.model as (typeof SUMMARY_MODELS)[number]) ? opts.model : DEFAULT_SUMMARY_MODEL,
     max_tokens: 400,
     system,
     messages: [{ role: 'user', content: user }],

@@ -84,6 +84,12 @@
     <input id="cop" type="number" step="0.1" min="1" max="6" placeholder="3" />
     <label for="lang">Summary language</label>
     <select id="lang"><option value="en">English</option><option value="sv">Svenska</option></select>
+    <label for="model">Model for the summary</label>
+    <select id="model">
+      <option value="claude-haiku-5-5">Claude Haiku 5.5 (recommended, about $0.02 a year)</option>
+      <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (more natural prose, about $0.30 a year)</option>
+      <option value="claude-opus-5-5">Claude Opus 5.5 (about $0.60 a year, no gain for this)</option>
+    </select>
     <label for="key">Anthropic API key (optional: Claude writes the weekly summary)</label>
     <input id="key" type="password" placeholder="sk-ant-…" autocomplete="off" />
     <div class="row"><button class="primary" id="b-save">Save</button><span id="saved" class="muted"></span></div>
@@ -220,6 +226,7 @@
   function onHomeyReady(Homey) {
     H = Homey;
     Homey.get('language', (e, v) => { if (!e && v) document.getElementById('lang').value = v; });
+    Homey.get('ai_model', (e, v) => { if (!e && v) document.getElementById('model').value = v; });
     api('GET', '/meters').then(m => {
       const sel = document.getElementById('meter');
       m.candidates.forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = `${c.name}${c.phases ? '' : ' (no phase data)'}`; sel.appendChild(o); });
@@ -234,6 +241,7 @@
         set('flat_price', document.getElementById('flat').value === '' ? null : Number(document.getElementById('flat').value)),
         set('heat_pump_cop', Math.min(8, Math.max(1, Number(document.getElementById('cop').value) || 3))),
         set('language', document.getElementById('lang').value),
+        set('ai_model', document.getElementById('model').value),
         key ? set('anthropic_api_key', key) : Promise.resolve(),
       ]).then(() => { document.getElementById('saved').textContent = 'Saved'; document.getElementById('key').value = ''; reload(); });
     };
