@@ -43,16 +43,15 @@ export class Pairer {
       if (this.open.length > this.cfg.MAX_OPEN) this.open.shift();
       return null;
     }
+    // Of the starts that match about as well as the best one, take the most recent: a fridge that
+    // started 2 minutes ago stops before a same-size load that started 15 minutes ago.
+    const scores = this.open.map(o => matchScore(o.delta, step.delta, this.cfg));
+    const top = Math.max(0, ...scores);
+    if (top <= 0) return null;
     let best = -1;
-    let bestScore = 0;
     for (let i = 0; i < this.open.length; i++) {
-      const score = matchScore(this.open[i].delta, step.delta, this.cfg);
-      if (score > 0 && score >= bestScore) {
-        best = i;
-        bestScore = score;
-      }
+      if (scores[i] >= top * this.cfg.NEAR_BEST && (best < 0 || this.open[i].t > this.open[best].t)) best = i;
     }
-    if (best < 0) return null;
     const on = this.open.splice(best, 1)[0];
     // Similar steps: average them. Different sizes mean another load switched in the same
     // reading as one of them; the start (sized after the load settled) is then the better one.

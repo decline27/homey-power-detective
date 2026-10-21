@@ -23,6 +23,14 @@ export function localDate(t: number, timeZone: string): string {
 export class DayMeter {
   private days: DayRecord[] = [];
   private last: { t: number; w: number } | null = null;
+  /** Local date of the current quarter hour: formatting a date for every reading is slow. */
+  private dateCache: { quarter: number; date: string } | null = null;
+
+  private dateOf(t: number): string {
+    const quarter = Math.floor(t / 900_000);
+    if (this.dateCache?.quarter !== quarter) this.dateCache = { quarter, date: localDate(t, this.timeZone) };
+    return this.dateCache.date;
+  }
 
   constructor(private readonly timeZone: string, private readonly maxGapMs = 90_000) {}
 
@@ -35,7 +43,7 @@ export class DayMeter {
     this.last = { t, w: totalW };
     if (!prev || t <= prev.t || t - prev.t > this.maxGapMs) return;
     // The previous reading holds until this one (a meter reports momentary power).
-    const day = this.day(localDate(prev.t, this.timeZone));
+    const day = this.day(this.dateOf(prev.t));
     const dt = t - prev.t;
     day.kWh += (prev.w * dt) / 3.6e9;
     day.coveredMs += dt;

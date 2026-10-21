@@ -17,7 +17,7 @@ export const DETECTOR = {
   /** Smallest change reported, summed over the phases (W). */
   MIN_STEP_W: 250,
   /** Smallest change on one phase that can be part of a change (a 3-phase load splits its power). */
-  PHASE_MIN_STEP_W: 100,
+  PHASE_MIN_STEP_W: 80,
   /** Phase steps starting within this window are one change (ms). */
   COMBINE_MS: 25_000,
   /** A change is reported at most this long after it started, even if a phase is still moving (ms). */
@@ -39,6 +39,8 @@ export const PAIRING = {
   MAX_ON_MS: 24 * 3_600_000,
   /** Open starts kept at once. */
   MAX_OPEN: 64,
+  /** Starts scoring at least this share of the best match count as equally good; the latest wins. */
+  NEAR_BEST: 0.9,
 };
 
 export const CLUSTERING = {
