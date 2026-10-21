@@ -82,6 +82,11 @@ Open the app's settings: pick the house meter if more than one is found, set cur
 flat price (prices are read from the Tibber home device when present), optionally an Anthropic
 API key for the weekly summary.
 
+On the Homey dashboard, add the **Power right now** widget (Edit dashboard → Add widget → Power
+Detective). It shows live power split into named loads, the always-on base and what is not yet
+recognised, today's kWh and how much of it is explained, and the finding worth most money. It
+refreshes every 15 s. Naming loads, tests and settings stay in the app's settings page.
+
 ## Develop
 
 ```

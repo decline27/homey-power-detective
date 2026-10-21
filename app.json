@@ -296,6 +296,23 @@
       "id": "load"
     }
   ],
+  "widgets": {
+    "now": {
+      "name": {
+        "en": "Power right now",
+        "sv": "Effekt just nu"
+      },
+      "height": 360,
+      "settings": [],
+      "api": {
+        "getNow": {
+          "method": "GET",
+          "path": "/now"
+        }
+      },
+      "id": "now"
+    }
+  },
   "capabilities": {
     "load_running": {
       "type": "boolean",

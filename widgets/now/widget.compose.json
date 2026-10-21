@@ -1,0 +1,8 @@
+{
+  "name": { "en": "Power right now", "sv": "Effekt just nu" },
+  "height": 360,
+  "settings": [],
+  "api": {
+    "getNow": { "method": "GET", "path": "/now" }
+  }
+}

@@ -113,6 +113,16 @@ test('live values become readings; loads, flows, actions and saved state work en
   app.setName(heater.id, 'Kitchen floor');
   await app.refresh();
   expect(app.loadsForAutocomplete('kitch')).toEqual([expect.objectContaining({ id: heater.id, name: 'Kitchen floor' })]);
+  // The widget: live total, what is running by name, today and the top finding.
+  const w = app.widgetState();
+  expect(w.totalW).toBeGreaterThan(0);
+  expect(w.loads).toBe(view.loads.length);
+  expect(w.today).not.toBeNull();
+  expect(w.top).not.toBeNull();
+  for (const r of w.running) expect(r.w).toBeGreaterThan(0);
+  expect(w.running.filter((r: any) => r.name).every((r: any) => r.name === 'Kitchen floor')).toBe(true);
+  const widgetApi = require('../../widgets/now/api.js');
+  expect(await widgetApi.getNow({ homey: { app } })).toMatchObject({ loads: w.loads });
   // Flow cards: trigger filters, the running condition, autocomplete and the test action.
   expect(await homey.run.get('load_started')!({ load: { id: heater.id } }, { loadId: heater.id })).toBe(true);
   expect(await homey.run.get('load_started')!({ load: { id: 'other' } }, { loadId: heater.id })).toBe(false);

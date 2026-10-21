@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script type="text/javascript" src="/homey.js" data-origin="widget"></script>
+  <style>
+    :root {
+      --ink: var(--homey-text-color, #14201c); --muted: var(--homey-text-color-light, #5d6b66);
+      --line: rgba(127, 127, 127, 0.22); --accent: #0e7c66; --base: #94a3a0; --rest: rgba(127, 127, 127, 0.25);
+      --c1: #0e7c66; --c2: #3b82c4; --c3: #c2410c; --c4: #7c3aed; --c5: #ca8a04;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --ink: var(--homey-text-color, #e8efec); --muted: var(--homey-text-color-light, #96a5a0); --accent: #3fcfa8; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 14px 16px; color: var(--ink); font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .top { display: flex; align-items: baseline; justify-content: space-between; }
+    .big { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+    .big small { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 10px 0 8px; background: var(--rest); }
+    .bar div { height: 100%; }
+    .rows { display: grid; gap: 4px; }
+    .row { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; font-size: 13px; }
+    .row i { width: 10px; height: 10px; border-radius: 3px; }
+    .row b { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .stats b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+    .finding { margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(14, 124, 102, 0.1); font-size: 13px; }
+    .finding b { color: var(--accent); }
+    .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="big" id="total">–<small>W</small></div>
+    <div class="muted" id="since"></div>
+  </div>
+  <div class="bar" id="bar"></div>
+  <div class="rows" id="rows"><div class="empty">Loading…</div></div>
+  <div class="stats">
+    <div><b id="kwh">–</b><span class="muted">kWh today</span></div>
+    <div><b id="expl">–</b><span class="muted">of today explained</span></div>
+  </div>
+  <div class="finding" id="finding" style="display:none"></div>
+
+<script>
+  const COLORS = ['--c1', '--c2', '--c3', '--c4', '--c5'];
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const r = (x, d = 0) => (x === null || x === undefined || !isFinite(x)) ? '–' : (Math.round(x * 10 ** d) / 10 ** d).toLocaleString();
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+  let H = null;
+
+  function call(path) {
+    // Widgets get a promise back; older hosts use a callback.
+    return new Promise((res, rej) => {
+      const p = H.api('GET', path, null, (e, v) => (e ? rej(e) : res(v)));
+      if (p && typeof p.then === 'function') p.then(res, rej);
+    });
+  }
+
+  function render(s) {
+    document.getElementById('total').innerHTML = `${r(s.totalW)}<small>W</small>`;
+    const known = s.running.filter(x => x.name);
+    const unknownW = s.running.filter(x => !x.name).reduce((a, x) => a + x.w, 0);
+    const base = s.baseW ?? 0;
+    const total = Math.max(s.totalW ?? 0, base + s.running.reduce((a, x) => a + x.w, 0), 1);
+    const parts = known.slice(0, 5).map((x, i) => ({ label: x.name, w: x.w, color: css(COLORS[i]), since: x.since }));
+    const rest = Math.max(0, (s.totalW ?? 0) - base - known.reduce((a, x) => a + x.w, 0));
+    document.getElementById('bar').innerHTML =
+      parts.map(p => `<div style="width:${p.w / total * 100}%;background:${p.color}" title="${esc(p.label)}"></div>`).join('') +
+      (base ? `<div style="width:${base / total * 100}%;background:${css('--base')}" title="Base load"></div>` : '');
+    const rows = parts.map(p => `<div class="row"><i style="background:${p.color}"></i><span>${esc(p.label)} <span class="muted">· ${ago(p.since)}</span></span><b>${r(p.w, -1)} W</b></div>`);
+    if (base) rows.push(`<div class="row"><i style="background:${css('--base')}"></i><span>Always on</span><b>${r(base, -1)} W</b></div>`);
+    if (rest > 50) rows.push(`<div class="row"><i style="background:${css('--rest')}"></i><span>Other${unknownW ? ' (not yet recognised)' : ''}</span><b>${r(rest, -1)} W</b></div>`);
+    document.getElementById('rows').innerHTML = rows.length ? rows.join('')
+      : `<div class="empty">${s.observedHours < 3 ? 'Learning your house: loads appear after a few hours.' : 'Nothing large running.'}</div>`;
+    document.getElementById('since').textContent = s.totalW === null ? s.status : `${s.loads} loads known`;
+    document.getElementById('kwh').textContent = s.today ? r(s.today.kWh, 1) : '–';
+    document.getElementById('expl').textContent = s.today ? `${r(s.today.explainedShare * 100)} %` : '–';
+    const f = document.getElementById('finding');
+    if (s.top) {
+      f.style.display = '';
+      f.innerHTML = `${esc(s.top.title)}${s.top.money !== null ? ` · <b>${s.top.saving ? 'save ~' : ''}${r(s.top.money)} ${esc(s.currency)}/month</b>` : ''}`;
+    } else f.style.display = 'none';
+  }
+
+  async function reload() {
+    try { render(await call('/now')); } catch (e) { document.getElementById('rows').innerHTML = `<div class="empty">${esc(e.message || e)}</div>`; }
+  }
+
+  function onHomeyReady(Homey) {
+    H = Homey;
+    reload().finally(() => Homey.ready());
+    setInterval(reload, 15000);
+  }
+</script>
+</body>
+</html>

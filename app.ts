@@ -321,6 +321,43 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     return res;
   }
 
+  /** The dashboard widget: what runs now, today so far, and the top finding. Cheap: no analysis run. */
+  widgetState() {
+    const now = Date.now();
+    const a = this.analysis;
+    const total = this.latest.get('measure_power');
+    const running = a
+      ? this.engine
+          .running()
+          .map(st => {
+            const c = classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, a.clusters);
+            const load = c ? a.loads.find(l => l.id === c.id) : undefined;
+            return {
+              name: load ? displayName(load) : null,
+              w: Math.round(st.delta[0] + st.delta[1] + st.delta[2]),
+              since: st.t,
+            };
+          })
+          .filter(r => r.w > 0)
+          .sort((x, y) => y.w - x.w)
+      : [];
+    const days = a?.days ?? [];
+    const today = days[days.length - 1] ?? null;
+    const lastFull = [...days].reverse().find(d => d.coveredHours >= 20) ?? today;
+    const top = a?.findings[0] ?? null;
+    return {
+      status: this.status,
+      observedHours: a?.observedHours ?? 0,
+      currency: this.userSettings().currency,
+      totalW: total && now - total.at < 120_000 ? Math.round(total.value) : null,
+      baseW: lastFull?.baseloadW ?? null,
+      running,
+      today: today ? { kWh: today.totalKWh, explainedShare: today.explainedShare } : null,
+      top: top ? { title: top.title, money: top.savingPerMonth ?? top.costPerMonth, saving: top.savingPerMonth !== null } : null,
+      loads: (a?.loads ?? []).length,
+    };
+  }
+
   /** Everything the settings page shows. */
   async view() {
     const a = this.analysis ?? (await this.refresh());
