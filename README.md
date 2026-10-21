@@ -42,24 +42,32 @@ benchmarks run the same code.
 
 ## Benchmarks (the judge is not the code)
 
-`npm run bench:deddiag -- <dir>` runs on DEDDIAG house 8 (Wenninger et al., *Scientific Data*
+`npm run bench:deddiag -- <dir> [fold1] [annotations]` runs on DEDDIAG house 8 (Wenninger et al., *Scientific Data*
 2021, figshare 13615073): 326 days of 3-phase mains from a German home, resampled to 10 s
 snapshots like a Swedish HAN meter. Loads and their names are learned on alternating 14-day
 blocks; the other blocks are scored against the plug meters of the dishwasher and the washing
 machine. Runs during mains-logger outages (20 % of the data) are left out and counted.
 
-| Appliance (held-out) | Precision | Recall | F1 | Energy found |
-|---|---|---|---|---|
-| Dishwasher (L3 heater) | 0.97 | 0.95 | **0.96** | 81 % (pumps are below the step size) |
-| Washing machine | 0.84 | 0.87 | **0.85** | 68 % |
+Two folds (learn on even blocks, score odd; then the reverse):
 
-The target was F1 ≥ 0.90 for both: met for the dishwasher, missed for the washing machine,
-whose 2 kW heater shares its phase and size with a kettle-like load.
+| Appliance (held-out) | Fold | Precision | Recall | F1 | Energy found |
+|---|---|---|---|---|---|
+| Dishwasher (L3 heater) | 0 | 0.97 | 0.96 | **0.97** | 82 % |
+| Dishwasher (L3 heater) | 1 | 0.98 | 0.95 | **0.97** | 84 % |
+| Washing machine (L3 heater) | 0 | 0.85 | 0.87 | **0.86** | 60 % |
+| Washing machine (L3 heater) | 1 | 0.82 | 0.98 | **0.90** | 58 % |
 
-`npm run bench:homey -- <dir>` runs on one house's Homey Insights export (6 h, one reading a
-minute, minute averages) and scores the heat pump against MELCloud's own run records. Minute
-averages smear a 4-minute compressor run over its phases, so this is a harder input than the
-live 10 s stream the app uses.
+"Energy found" is low because pumps and motors draw less than the smallest step the engine
+reports; the heaters, which use most of the energy, are found.
+
+The target was F1 ≥ 0.90 on both appliances: met for the dishwasher, met on one fold and missed
+on the other for the washing machine, whose 2 kW heater shares its phase and size with a
+kettle-like load.
+
+`npm run bench:homey -- <dir> [hr]` runs on one house's Homey Insights export and scores the
+heat pump against MELCloud's own run records. The 6-hour export has one value a minute
+(averages), which smears a 4-minute compressor run over its phases: heat pump F1 0.72
+(precision 1.00, recall 0.56). The live app reads 10 s values, like the benchmark above.
 
 Benchmark data is not in the repository (`bench-data/` is ignored).
 

@@ -44,7 +44,9 @@ const ms = Date.now() - t0;
 const start = T[0] * 1000;
 const end = T[T.length - 1] * 1000;
 const BLOCK = 14 * 86_400_000;
-const isTrain = (t: number) => Math.floor((t - start) / BLOCK) % 2 === 0;
+// Fold 0 learns on even blocks, fold 1 on odd blocks: both must hold up.
+const fold = process.argv.includes('fold1') ? 1 : 0;
+const isTrain = (t: number) => Math.floor((t - start) / BLOCK) % 2 === fold;
 console.log(`readings ${T.length} (${((end - start) / 86_400_000).toFixed(0)} days) in ${(ms / 1000).toFixed(1)} s = ${((ms / T.length) * 1000).toFixed(1)} µs/reading; activations ${acts.length}`);
 
 const train = acts.filter(a => isTrain(a.start));
@@ -89,8 +91,8 @@ const ref = (name: string, train: boolean): Reference => ({
 });
 const opts = { tolMs: 10 * 60_000, gapMs: 45 * 60_000, maxDurationRatio: Infinity, minPrecision: 0.6, minF1: 0.3 };
 // Judge: the plug meters (every run they saw); the hand annotations are a second, sparser judge.
-const judges = process.argv[3] === 'annotations' ? ['dishwasher', 'washing_machine'] : ['dishwasher_plug', 'washing_machine_plug'];
-console.log(`judge: ${process.argv[3] === 'annotations' ? 'hand annotations' : 'plug meters'}`);
+const judges = process.argv.includes('annotations') ? ['dishwasher', 'washing_machine'] : ['dishwasher_plug', 'washing_machine_plug'];
+console.log(`judge: ${process.argv.includes('annotations') ? 'hand annotations' : 'plug meters'}, fold ${fold}`);
 const named = matchReferences(loads, judges.map(n => ref(n, true)), opts);
 const overlaps = (r: { start: number; end: number }, refs: Array<{ start: number; end: number }>) =>
   refs.some(x => r.start <= x.end + opts.tolMs && r.end >= x.start - opts.tolMs);
