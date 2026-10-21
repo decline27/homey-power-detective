@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "outDir": ".benchbuild", "noUnusedLocals": false },
+  "include": ["src/engine/**/*", "src/insight/**/*", "test/bench/**/*"],
+  "exclude": ["node_modules", ".homeybuild", ".benchbuild"]
+}

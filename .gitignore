@@ -1,0 +1,8 @@
+node_modules/
+.homeybuild/
+.benchbuild/
+coverage/
+env.json
+*.log
+.DS_Store
+bench-data/

@@ -1,0 +1,28 @@
+{
+  "name": "com.decline27.powerdetective",
+  "version": "0.1.0",
+  "description": "Finds which loads use power in your house from the Tibber Pulse alone",
+  "main": "app.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "jest",
+    "bench:deddiag": "tsc -p tsconfig.bench.json && node .benchbuild/test/bench/deddiag.js",
+    "bench:homey": "tsc -p tsconfig.bench.json && node .benchbuild/test/bench/homey-day.js",
+    "validate": "homey app validate --level verified"
+  },
+  "dependencies": {
+    "homey-api": "3.20.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.17.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.2",
+    "typescript": "~5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
