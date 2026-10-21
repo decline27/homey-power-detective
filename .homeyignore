@@ -1,0 +1,7 @@
+# Development only: never packaged into the app.
+bench-data/
+coverage/
+test/
+.benchbuild/
+jest.config.js
+tsconfig.bench.json

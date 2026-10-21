@@ -1,7 +1,7 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/test/unit/**/*.test.ts'],
+  testMatch: ['<rootDir>/test/unit/**/*.test.ts', '<rootDir>/test/system/**/*.test.ts'],
   moduleNameMapper: { '^homey$': '<rootDir>/test/mocks/homey.ts' },
   modulePathIgnorePatterns: ['<rootDir>/.homeybuild/', '<rootDir>/.benchbuild/'],
   collectCoverageFrom: ['src/**/*.ts', 'app.ts'],

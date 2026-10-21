@@ -74,8 +74,11 @@
     const rows = parts.map(p => `<div class="row"><i style="background:${p.color}"></i><span>${esc(p.label)} <span class="muted">· ${ago(p.since)}</span></span><b>${r(p.w, -1)} W</b></div>`);
     if (base) rows.push(`<div class="row"><i style="background:${css('--base')}"></i><span>Always on</span><b>${r(base, -1)} W</b></div>`);
     if (rest > 50) rows.push(`<div class="row"><i style="background:${css('--rest')}"></i><span>Other${unknownW ? ' (not yet recognised)' : ''}</span><b>${r(rest, -1)} W</b></div>`);
-    document.getElementById('rows').innerHTML = rows.length ? rows.join('')
-      : `<div class="empty">${s.observedHours < 3 ? 'Learning your house: loads appear after a few hours.' : 'Nothing large running.'}</div>`;
+    // Until the first load is known there is always unrecognised power: say why.
+    const learning = s.loads === 0;
+    document.getElementById('rows').innerHTML =
+      (learning ? '<div class="empty">Learning your house: loads appear after a few hours.</div>' : '') +
+      (rows.length ? rows.join('') : learning ? '' : '<div class="empty">Nothing large running.</div>');
     document.getElementById('since').textContent = s.totalW === null ? s.status : `${s.loads} loads known`;
     document.getElementById('kwh').textContent = s.today ? r(s.today.kWh, 1) : '–';
     document.getElementById('expl').textContent = s.today ? `${r(s.today.explainedShare * 100)} %` : '–';

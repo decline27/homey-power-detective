@@ -90,7 +90,26 @@ refreshes every 15 s. Naming loads, tests and settings stay in the app's setting
 ## Develop
 
 ```
-npm test                  # unit tests with coverage
+npm test                  # unit and system tests
+npm run test:unit         # engine, judge, insight and Homey wiring, piece by piece
+npm run test:system       # the whole app in a simulated house (below)
 npm run lint              # type check
 npm run validate          # homey app validate --level verified
 ```
+
+### System tests
+
+`test/system/harness.ts` runs the real app against a fake Homey with a virtual clock and a
+simulated house: a floor heater on L1 every 63 min, a 3-phase heat pump metered by its own device,
+a kettle and an oven, a solar inverter, hourly prices. The app's own timers do the work; the tests
+only move the clock and use what a user or Homey uses: `api.ts`, the widget API, flow cards, the
+load driver and its devices. The house keeps the ground truth, and that is the judge.
+
+| File | What it proves |
+|---|---|
+| `house.test.ts` | A week, step by step: loads found unaided (floor heater and heat pump found every time on runs not switching together with another load; F1 ≥ 0.95 / ≥ 0.85 overall), named from the metered device, price and base load right, findings announced once; flows fire for the right load; naming; the widget; a paired device meters its runs within 5 %; a switch-off test confirms the right load and rejects a wrong guess; a restart mid-run keeps ids, names and the run; one weekly summary. |
+| `failures.test.ts` | Homey API not ready at boot, two meters and no choice, a meter without phase data, the Pulse going quiet, garbage values, a corrupt saved state, no driver. |
+| `pages.test.ts` | The settings page and the widget in Chromium, wired to the running app: what they show, that naming, tests, settings and the summary button land in the app, both themes, phone width, the widget fitting its 360 px tile. Skipped when no Chromium is found (`PD_CHROMIUM` or Playwright's). |
+
+Known limit, measured here: two loads switching within the same few seconds are seen as one
+change; in the simulated house that costs the heat pump 2 of 19 runs over two days.
