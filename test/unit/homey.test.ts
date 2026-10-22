@@ -1,5 +1,6 @@
-import { analyse, displayName, nameFromDevices } from '../../src/homey/analysis';
+import { analyse, displayName, meteredRunOf, nameFromDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
+import { MeteredDevices } from '../../src/homey/metered';
 import { PriceBook } from '../../src/homey/prices';
 import { ReferenceTracker } from '../../src/homey/references';
 import { PowerEngine } from '../../src/engine/engine';
@@ -167,6 +168,67 @@ describe('analysis', () => {
     expect(named.has(idOf(900))).toBe(true);
     expect(named.has(idOf(1330))).toBe(false);
     expect(m.every(x => x.referenceId === 'hp')).toBe(true);
+  });
+
+  test('two metered devices of a size on one phase: their runs count once, by their own meters', () => {
+    // A spa heater and a space heater on L2, close enough in size to be one load; floor heating on L1.
+    const spa = every(240, 40, 6, 10);
+    const heater = every(240, 60, 6, 130);
+    const floorOn = every(63, 21, 22);
+    const house = synthHouse(
+      [{ w: [0, 2600, 0], on: spa }, { w: [0, 2000, 0], on: heater }, { w: [1330, 0, 0], on: floorOn }],
+      24 * 60 * MIN
+    );
+    const eng = new PowerEngine('UTC');
+    house.forEach(r => eng.push(r));
+    const date = '2026-10-21';
+    const kWh = (on: Array<[number, number]>, w: number) => on.reduce((s, [a, b]) => s + (w * (b - a)) / 3.6e9, 0);
+    const device = (id: string, name: string, share: [number, number, number], days: Record<string, number>) => ({
+      id, name, w: 0, at: T0, counter: null, hasCounter: true, live: false, days,
+      outcomes: [0, 1, 2].map(() => ({ hit: true, share, lagMs: 0 })),
+    });
+    const metered = MeteredDevices.restore({
+      version: 1,
+      devices: [
+        device('spa', 'BWA Spa', [0, 1, 0], { [date]: kWh(spa, 2600) }),
+        device('heater', 'Space heater', [0, 1, 0], { [date]: kWh(heater, 2000) }),
+      ],
+    }, 'UTC');
+    const refs = [
+      { id: 'spa', name: 'BWA Spa', intervals: spa.map(([start, end]) => ({ start, end })) },
+      { id: 'heater', name: 'Space heater', intervals: heater.map(([start, end]) => ({ start, end })) },
+    ];
+    const a = analyse(eng, refs, [], new PriceBook(), settings, T0 + 24 * 60 * MIN, { metered });
+
+    const l2 = a.loads.filter(l => l.phases === 'L2');
+    expect(l2.length).toBeGreaterThan(0);
+    l2.forEach(l => expect(l.source).toBe('device'));
+    const floor = a.loads.find(l => l.phases === 'L1')!;
+    expect(floor.name).toBeNull();
+
+    const day = a.accounts.find(d => d.date === date)!;
+    expect(day.overlapKWh).toBeLessThan(0.1);
+    const loadRows = day.rows.filter(r => r.kind === 'load');
+    expect(loadRows).toHaveLength(1);
+    expect(Math.abs(loadRows[0].kWh - kWh(floorOn, 1330)) / kWh(floorOn, 1330)).toBeLessThan(0.15);
+  });
+
+  test('a run is a metered device only on its phases and at its switch-on', () => {
+    const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
+    const shares = new Map([['hp', v(0.4, 0.3, 0.3)], ['spa', v(0, 1, 0)]]);
+    const runOf = meteredRunOf(
+      [
+        { id: 'hp', name: 'Heatpump', intervals: [{ start: T0, end: T0 + 10 * MIN }] },
+        { id: 'spa', name: 'BWA Spa', intervals: [{ start: T0, end: T0 + 40 * MIN }] },
+        { id: 'plug', name: 'Not learned', intervals: [{ start: T0, end: T0 + 40 * MIN }] },
+      ],
+      shares
+    );
+    const run = (start: number, delta: [number, number, number]) => ({ start, end: start + 20 * MIN, delta });
+    expect(runOf(run(T0 + MIN, v(1330, 0, 0)))).toBeNull(); // the heat pump's start, but L1 only
+    expect(runOf(run(T0 + MIN, v(240, 180, 180)))).toBe('hp');
+    expect(runOf(run(T0 + 2 * MIN, v(0, 2600, 0)))).toBe('spa');
+    expect(runOf(run(T0 + 30 * MIN, v(0, 2600, 0)))).toBeNull(); // on L2, but not when the spa switched on
   });
 
   test('programme mode: a plug-metered appliance whose heater is a part of the run', () => {

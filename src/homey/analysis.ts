@@ -6,7 +6,8 @@ import { classify } from '../engine/clustering';
 import { PowerEngine } from '../engine/engine';
 import { LabelMatch, Reference, matchReferences } from '../engine/labels';
 import { Score } from '../engine/score';
-import { LoadCluster } from '../engine/types';
+import { CLUSTERING } from '../engine/config';
+import { Activation, LoadCluster, Vec3, activationW } from '../engine/types';
 import { Experiment, ExperimentResult, evaluateExperiment } from '../insight/experiments';
 import { Finding, buildFindings } from '../insight/findings';
 import { DayRecord } from '../engine/day-meter';
@@ -14,7 +15,7 @@ import { AccountInput, DayAccount, buildAccount } from '../insight/account';
 import { DayLedger, buildDayLedger } from '../insight/ledger';
 import { dayBounds } from '../insight/time';
 import { HeatingSignature, TemperatureBook, heatingSignature } from '../insight/weather';
-import { MeteredDevices, MeteredStatus } from './metered';
+import { METERED, MeteredDevices, MeteredStatus } from './metered';
 import { PriceBook } from './prices';
 
 export const ANALYSIS = {
@@ -24,6 +25,8 @@ export const ANALYSIS = {
   LEDGER_DAYS: 7,
   /** MELCloud and similar report a run a few minutes late (ms). */
   REFERENCE_TOL_MS: 6 * 60_000,
+  /** A load whose runs are at least this share metered devices' runs is named after them. */
+  METERED_RUN_SHARE: 0.8,
 };
 
 export interface UserSettings {
@@ -122,6 +125,29 @@ export function nameFromDevices(loads: LoadCluster[], refs: Reference[]): LabelM
   return [...direct, ...programmes];
 }
 
+/**
+ * The metered device a run is, when one switched on with it on the same phases. Its own meter
+ * already counts that energy. Runs, not loads: one load can be two devices of a size on one phase
+ * (a spa heater and a space heater), so neither device's timing names the load as a whole.
+ */
+export function meteredRunOf(
+  refs: Reference[],
+  shares: Map<string, Vec3>
+): (a: Activation) => string | null {
+  const devices = refs.filter(r => shares.has(r.id));
+  return a => {
+    const w = activationW(a);
+    if (w <= 0) return null;
+    const own = a.delta.map(x => Math.max(0, x) / w);
+    for (const r of devices) {
+      const share = shares.get(r.id) as Vec3;
+      if (own.reduce((s, x, k) => s + Math.abs(x - share[k]), 0) > CLUSTERING.MAX_SHARE_DISTANCE) continue;
+      if (r.intervals.some(i => Math.abs(i.start - a.start) <= ANALYSIS.REFERENCE_TOL_MS)) return r.id;
+    }
+    return null;
+  };
+}
+
 export function analyse(
   engine: PowerEngine,
   refs: Reference[],
@@ -161,16 +187,35 @@ export function analyse(
       .filter((id): id is string => !!id)
   );
 
+  // Runs that a metered device is (its phases learned from the house meter, so the check is real).
+  const shares = new Map(
+    (sources.metered?.status() ?? []).filter(m => m.share && m.matches >= METERED.MIN_MATCHES).map(m => [m.id, m.share as Vec3])
+  );
+  const meteredRun = meteredRunOf(refs, shares);
+  const runDevices = new Map(clusters.map(c => [c.id, c.activations.map(meteredRun)]));
+  const refName = new Map(refs.map(r => [r.id, r.name]));
+  /** The devices a load's runs mostly are, when no single device's timing named it. */
+  const meteredBy = (c: LoadCluster): { name: string; id: string } | null => {
+    const ids = runDevices.get(c.id) ?? [];
+    const hits = ids.filter((id): id is string => id !== null);
+    if (!ids.length || hits.length / ids.length < ANALYSIS.METERED_RUN_SHARE) return null;
+    const counts = new Map<string, number>();
+    hits.forEach(id => counts.set(id, (counts.get(id) ?? 0) + 1));
+    const byCount = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    return { name: byCount.map(id => refName.get(id) ?? id).join(' / '), id: byCount[0] };
+  };
+
   const loads: LoadView[] = clusters.map(c => {
     const m = byLoad.get(c.id);
+    const mb = m ? null : meteredBy(c);
     const user = s.names[c.id];
-    const name = user ?? confirmedBy.get(c.id) ?? m?.referenceName ?? null;
+    const name = user ?? confirmedBy.get(c.id) ?? m?.referenceName ?? mb?.name ?? null;
     return {
       id: c.id,
       name,
-      source: user ? 'user' : confirmedBy.has(c.id) ? 'test' : m ? 'device' : null,
-      device: m?.referenceName ?? null,
-      deviceId: m?.referenceId ?? null,
+      source: user ? 'user' : confirmedBy.has(c.id) ? 'test' : m || mb ? 'device' : null,
+      device: m?.referenceName ?? mb?.name ?? null,
+      deviceId: m?.referenceId ?? mb?.id ?? null,
       score: m?.score ?? null,
       phases: c.phases,
       medianW: c.medianW,
@@ -192,6 +237,12 @@ export function analyse(
 
   const allDays = engine.days().map(d => buildDayLedger(d, clusters, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
   const days = allDays.slice(-ANALYSIS.LEDGER_DAYS);
+  // The account counts a metered device's runs once, by its own meter: not again as a load.
+  const unmetered = clusters.map(c => {
+    const ids = runDevices.get(c.id) ?? [];
+    return { ...c, activations: c.activations.filter((_, i) => !ids[i]) };
+  });
+  const accountDays = engine.days().map(d => buildDayLedger(d, unmetered, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
   // The account: the house meter's day, the device meters, the residual's loads and base.
   const loadName = new Map(loads.map(l => [l.id, displayName(l)]));
   const accountInput = (l: DayLedger): AccountInput => {
@@ -208,14 +259,14 @@ export function analyse(
     };
   };
   const hddOf = (date: string) => sources.temps?.degreeDays(dayBounds(date, s.timeZone)) ?? null;
-  const points = allDays
+  const points = accountDays
     .map(l => buildAccount(accountInput(l)))
     .filter(a => a.coveredHours >= 20)
     // What meters and found loads leave (always-on and unexplained) is what the weather may explain.
     .map(a => ({ hdd: hddOf(a.date), kWh: a.rows.filter(r => r.kind === 'unexplained' || r.kind === 'always_on').reduce((x, r) => x + r.kWh, 0) }))
     .filter((p): p is { hdd: number; kWh: number } => p.hdd !== null);
   const heating = heatingSignature(points);
-  const accounts = days.map(l => {
+  const accounts = accountDays.slice(-ANALYSIS.LEDGER_DAYS).map(l => {
     const hdd = hddOf(l.date);
     return buildAccount({ ...accountInput(l), weatherKWh: heating && hdd !== null ? heating.slope * hdd : null });
   });
