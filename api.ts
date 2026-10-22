@@ -30,4 +30,9 @@ module.exports = {
   async writeSummary({ homey }: Ctx) {
     return homey.app.writeSummary(false);
   },
+
+  /** The state as last saved, to replay the analysis off the Homey (app logs cannot be read). */
+  async getSavedState({ homey }: Ctx) {
+    return homey.app.savedState();
+  },
 };

@@ -24,6 +24,7 @@
     "getMeters": { "method": "GET", "path": "/meters" },
     "setName": { "method": "POST", "path": "/name" },
     "startTest": { "method": "POST", "path": "/test" },
-    "writeSummary": { "method": "POST", "path": "/summary" }
+    "writeSummary": { "method": "POST", "path": "/summary" },
+    "getSavedState": { "method": "GET", "path": "/debug/state" }
   }
 }

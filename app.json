@@ -52,6 +52,10 @@
     "writeSummary": {
       "method": "POST",
       "path": "/summary"
+    },
+    "getSavedState": {
+      "method": "GET",
+      "path": "/debug/state"
     }
   },
   "flow": {

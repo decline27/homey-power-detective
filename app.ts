@@ -515,6 +515,10 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     }
   }
 
+  savedState(): SavedState | null {
+    return this.load();
+  }
+
   private save(): void {
     try {
       const state: SavedState = {
