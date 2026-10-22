@@ -229,6 +229,23 @@ describe('missed stops (runs far longer than the load runs)', () => {
     expect(c.kWhPerDay).toBeCloseTo((40 * 1330 * 21) / 60 / 1000 / days, 1);
   });
 
+  test('runs far shorter than the load runs are another appliance of its size: a kettle is not the floor heating', () => {
+    // Floor heating 1380 W on L1, 21 min every 63 min; a 1100 W kettle on L1, 2-3 min, 4 times.
+    const floor = Array.from({ length: 20 }, (_, i) => act2(T0 + i * 63 * MIN, 21, [1380, 0, 0]));
+    const kettle = [2, 3, 2, 3].map((m, i) => act2(T0 + (i * 300 + 30) * MIN, m, [1100, 0, 0]));
+    const loads = clusterActivations([...floor, ...kettle]);
+    expect(loads).toHaveLength(2);
+    const heater = loads.find(c => c.medianMinutes > 10)!;
+    expect(heater.count).toBe(20);
+    expect(heater.rhythmic).toBe(true);
+    expect(loads.find(c => c.medianMinutes < 10)!.count).toBe(4);
+    // Classified the same way once finished; still running, a start can be the heater.
+    const kettleRun = act2(T0, 2, [1380, 0, 0]);
+    expect(classify(kettleRun, [heater])).toBeNull();
+    expect(classify(kettleRun, [heater], undefined, true)).toBe(heater);
+    expect(classify(act2(T0, 20, [1380, 0, 0]), [heater])).toBe(heater);
+  });
+
   test('loads whose runs vary a lot keep their long runs (an EV charging 30 min to 6 h)', () => {
     const ev = [30, 60, 90, 120, 180, 240, 300, 360, 45, 150].map((m, i) => act2(T0 + i * 24 * 60 * MIN, m, [3680, 3680, 3680]));
     const [c] = clusterActivations(ev);
@@ -282,7 +299,7 @@ describe('PowerEngine end to end (synthetic house)', () => {
 
 describe('LoadRegistry (stable ids)', () => {
   const cluster = (id: string, share: Vec3, medianW: number, kWhPerDay = 1): LoadCluster => ({
-    id, phases: 'L1', share, medianW, medianMinutes: 20, p90Minutes: 25, maxMinutes: 35, count: 10, startsPerDay: 20, kWhPerDay,
+    id, phases: 'L1', share, medianW, medianMinutes: 20, p90Minutes: 25, maxMinutes: 35, minMinutes: 5, count: 10, startsPerDay: 20, kWhPerDay,
     periodMinutes: 60, periodCv: 0.1, rhythmic: true, activations: [],
   });
 

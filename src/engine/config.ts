@@ -59,6 +59,11 @@ export const CLUSTERING = {
   /** An activation longer than FACTOR × the load's long runs (90th pct) + SLACK minutes is not that load. */
   MAX_DURATION_FACTOR: 2,
   DURATION_SLACK_MIN: 10,
+  /**
+   * An activation shorter than the load's short runs (25th pct) / this is not that load: a 2-min
+   * kettle on L1 is not a 20-min floor heating cycle of the same size.
+   */
+  MIN_DURATION_DIVISOR: 4,
 };
 
 export const STORE = {

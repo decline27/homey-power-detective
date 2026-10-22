@@ -49,13 +49,37 @@ export interface Window {
   to: number;
 }
 
+const minutesOf = (a: Activation) => (a.end - a.start) / 60_000;
+
+/** The value at quantile p of sorted values (lower of the two around it). */
+const quantile = (sorted: number[], p: number) => sorted[Math.floor(p * (sorted.length - 1))];
+
 export function clusterActivations(
   activations: Activation[],
   window?: Window,
   cfg: ClusteringConfig = CLUSTERING
 ): LoadCluster[] {
+  const used = new Set<string>();
+  return groupActivations(activations.filter(a => activationW(a) > 0 && a.end > a.start), cfg)
+    .filter(g => g.members.length >= cfg.MIN_COUNT)
+    .map(g => describe(g, cfg, window))
+    .sort((x, y) => y.kWhPerDay - x.kWhPerDay)
+    .map(c => {
+      // Two loads of nearly the same size on the same phases would share an id: suffix the second.
+      let id = c.id;
+      for (let i = 2; used.has(id); i++) id = `${c.id}-${i}`;
+      used.add(id);
+      return { ...c, id };
+    });
+}
+
+/**
+ * Leader clustering by power and phases; then each group gives up the runs far shorter than its
+ * own, which are grouped again among themselves (the kettle that matched the floor heating's size
+ * can be a load of its own).
+ */
+function groupActivations(activations: Activation[], cfg: ClusteringConfig): Group[] {
   const items = activations
-    .filter(a => activationW(a) > 0 && a.end > a.start)
     .map(a => ({ a, share: phaseShare(a.delta), logW: Math.log(activationW(a)) }))
     .sort((x, y) => x.logW - y.logW || x.a.start - y.a.start);
 
@@ -84,26 +108,28 @@ export function clusterActivations(
     best.share = best.share.map((v, k) => (v * n + it.share[k]) / (n + 1)) as Vec3;
   }
 
-  const used = new Set<string>();
-  return groups
-    .filter(g => g.members.length >= cfg.MIN_COUNT)
-    .map(g => describe(g, cfg, window))
-    .sort((x, y) => y.kWhPerDay - x.kWhPerDay)
-    .map(c => {
-      // Two loads of nearly the same size on the same phases would share an id: suffix the second.
-      let id = c.id;
-      for (let i = 2; used.has(id); i++) id = `${c.id}-${i}`;
-      used.add(id);
-      return { ...c, id };
-    });
+  const evicted: Activation[] = [];
+  for (const g of groups) {
+    if (g.members.length < cfg.MIN_COUNT) continue;
+    const min = quantile(g.members.map(minutesOf).sort((x, y) => x - y), 0.25) / cfg.MIN_DURATION_DIVISOR;
+    const short = g.members.filter(a => minutesOf(a) < min);
+    if (!short.length) continue;
+    evicted.push(...short);
+    g.members = g.members.filter(a => minutesOf(a) >= min);
+    const shares = g.members.map(a => phaseShare(a.delta));
+    g.share = [0, 1, 2].map(k => shares.reduce((s, x) => s + x[k], 0) / shares.length) as Vec3;
+    g.logW = g.members.reduce((s, a) => s + Math.log(activationW(a)), 0) / g.members.length;
+  }
+  // Each pass takes runs from a group that also has longer ones, so the evicted set shrinks.
+  return evicted.length ? [...groups, ...groupActivations(evicted, cfg)] : groups;
 }
 
 function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster {
   const acts = [...g.members].sort((x, y) => x.start - y.start);
   const watts = acts.map(activationW);
-  const minutes = acts.map(a => (a.end - a.start) / 60_000);
+  const minutes = acts.map(minutesOf);
   const sorted = [...minutes].sort((x, y) => x - y);
-  const q = (p: number) => sorted[Math.floor(p * (sorted.length - 1))];
+  const q = (p: number) => quantile(sorted, p);
   const maxMinutes = q(0.75) + 3 * (q(0.75) - q(0.25)) + cfg.DURATION_SLACK_MIN;
   const medianMinutes = median(minutes);
   // A missed stop makes a run far longer than the load runs: count it at the median length.
@@ -131,6 +157,7 @@ function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster
     medianMinutes,
     p90Minutes: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))],
     maxMinutes,
+    minMinutes: q(0.25) / cfg.MIN_DURATION_DIVISOR,
     count: acts.length,
     startsPerDay: acts.length / spanDays,
     kWhPerDay: kWh / spanDays,
@@ -146,7 +173,13 @@ function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster
  * or null. Used live (to say "the dishwasher started") and to test on data the loads were not
  * learned from.
  */
-export function classify(a: Activation, loads: LoadCluster[], cfg: ClusteringConfig = CLUSTERING): LoadCluster | null {
+export function classify(
+  a: Activation,
+  loads: LoadCluster[],
+  cfg: ClusteringConfig = CLUSTERING,
+  /** Still on: how long it will run is not known yet, so no run is too short. */
+  running = false
+): LoadCluster | null {
   const w = activationW(a);
   if (!(w > 0)) return null;
   const share = phaseShare(a.delta);
@@ -160,6 +193,8 @@ export function classify(a: Activation, loads: LoadCluster[], cfg: ClusteringCon
     if (dW > cfg.MAX_LOG_POWER_DIFF || dS > cfg.MAX_SHARE_DISTANCE) continue;
     // A start paired with the wrong, much later stop: far longer than the load ever runs.
     if (minutes > cfg.MAX_DURATION_FACTOR * c.p90Minutes + cfg.DURATION_SLACK_MIN) continue;
+    // Far shorter than the load runs: another appliance of the same size.
+    if (!running && minutes < (c.minMinutes ?? 0)) continue;
     const d = dW / cfg.MAX_LOG_POWER_DIFF + dS / cfg.MAX_SHARE_DISTANCE;
     if (d < bestD) {
       bestD = d;

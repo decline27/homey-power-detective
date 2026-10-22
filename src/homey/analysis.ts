@@ -100,7 +100,7 @@ const HEAT_PUMP_NAME = /heat ?pump|värmepump|varmepump|ecodan|nibe|thermia/i;
 export function runningNow(engine: PowerEngine, clusters: LoadCluster[], now: number): Array<{ t: number; w: number; cluster: LoadCluster | null }> {
   return engine
     .running()
-    .map(st => ({ st, cluster: classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters) }))
+    .map(st => ({ st, cluster: classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters, undefined, true) }))
     .filter(x => !x.cluster || now - x.st.t <= x.cluster.maxMinutes * 60_000)
     .map(x => ({ t: x.st.t, w: x.st.delta[0] + x.st.delta[1] + x.st.delta[2], cluster: x.cluster }));
 }

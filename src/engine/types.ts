@@ -44,6 +44,8 @@ export interface LoadCluster {
    * fence). A longer run is a missed stop; its energy counts at the median length.
    */
   maxMinutes: number;
+  /** Shortest run that can be this load (minutes): its short runs (25th pct) / MIN_DURATION_DIVISOR. */
+  minMinutes: number;
   count: number;
   /** Activations per day over the observed span. */
   startsPerDay: number;

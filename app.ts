@@ -196,14 +196,14 @@ module.exports = class PowerDetectiveApp extends Homey.App {
 
   // ---- live events -------------------------------------------------------------------------
 
-  private loadFor(a: Activation) {
+  private loadFor(a: Activation, running = false) {
     if (!this.analysis) return null;
-    const c = classify(a, this.analysis.clusters);
+    const c = classify(a, this.analysis.clusters, undefined, running);
     return c ? this.analysis.loads.find(l => l.id === c.id) ?? null : null;
   }
 
   private onStart(s: StepEvent): void {
-    const load = this.loadFor({ start: s.t, end: s.t, delta: s.delta });
+    const load = this.loadFor({ start: s.t, end: s.t, delta: s.delta }, true);
     if (!load) return;
     this.startedAs.set(s.t, load.id);
     if (this.startedAs.size > 200) this.startedAs.delete(this.startedAs.keys().next().value as number);
