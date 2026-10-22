@@ -67,6 +67,9 @@
   <h2>Loads found</h2>
   <div class="card" id="loads"></div>
 
+  <h2>Appliances recognised by their pattern</h2>
+  <div class="card" id="appliances"><span class="muted">None yet. A dishwasher, washing machine, tumble dryer, oven or kettle appears here once a run looks like one.</span></div>
+
   <h2>Switch-off tests</h2>
   <div class="card" id="tests"><span class="muted">None yet. Switch something off and press "Test" on the load you think it is.</span></div>
 
@@ -104,7 +107,7 @@
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const r = (x, d = 0) => (x === null || x === undefined || !isFinite(x)) ? '–' : (Math.round(x * 10 ** d) / 10 ** d).toLocaleString();
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const nameOf = l => l.name || `${Math.round(l.medianW / 10) * 10} W on ${l.phases}`;
+  const nameOf = l => l.name || (l.suggestion ? `${l.suggestion} (likely)` : `${Math.round(l.medianW / 10) * 10} W on ${l.phases}`);
   let H = null, state = null, filled = false;
 
   function api(method, path, body) {
@@ -200,11 +203,20 @@
             ${l.source === 'device' ? ` · matches <b>${esc(l.device)}</b> (F1 ${r(l.score.f1, 2)})` : ''}
             ${l.source === 'test' ? ' · confirmed by your test' : ''}
           </div>
+          ${l.suggestion ? `<div class="row" style="align-items:center"><span class="muted" style="font-size:12px">Looks like: <b>${esc(l.suggestion)}</b></span>
+            <button data-use="${esc(l.id)}" data-label="${esc(l.suggestion)}">That's right</button></div>` : ''}
           <div class="row"><input data-name="${esc(l.id)}" value="${esc(l.source === 'user' ? l.name : '')}" placeholder="Name it (e.g. Kitchen floor)" />
             <button data-test="${esc(l.id)}">Test</button></div>
         </div>
         <div class="right"><b>${r(l.kWhPerDay, 1)}</b> kWh/day<br><span class="muted">${l.costPerMonth !== null ? `${r(l.costPerMonth)} ${esc(cur)}/mo` : ''}</span></div>
       </div>`).join('') : '<span class="muted">No loads yet. The first ones appear after a few hours.</span>';
+
+    const when = t => new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    if (s.appliances && s.appliances.length) {
+      document.getElementById('appliances').innerHTML = '<table><tr><th>Looks like</th><th>Runs</th><th>Last</th><th>kWh/run</th></tr>' +
+        s.appliances.map(x => `<tr><td><b>${esc(x.label)}</b> <span class="chip">${esc(x.phases)}</span><div class="muted" style="font-size:12px">${esc(x.reason)}</div></td><td>${x.sessions}</td><td>${when(x.lastStart)}</td><td>${r(x.kWhPerSession, 2)}</td></tr>`).join('') + '</table>' +
+        '<div class="muted" style="font-size:12px;margin-top:6px">Guessed from how typical appliances heat (two heats for a dishwasher, one for a washing machine, a cycling element for a dryer), not learned from your house. Once one has run three times it shows under Loads found, where "That\'s right" names it.</div>';
+    }
 
     if (s.experiments.length) {
       document.getElementById('tests').innerHTML = '<table><tr><th>Switched off</th><th>Load</th><th>Result</th></tr>' +
@@ -232,6 +244,8 @@
   }
 
   document.addEventListener('click', async ev => {
+    const u = ev.target.closest('[data-use]');
+    if (u) { await api('POST', '/name', { loadId: u.dataset.use, name: u.dataset.label }); reload(); return; }
     const t = ev.target.closest('[data-test]');
     if (t) {
       const load = state.loads.find(l => l.id === t.dataset.test);

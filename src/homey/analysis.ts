@@ -12,7 +12,8 @@ import { Experiment, ExperimentResult, evaluateExperiment } from '../insight/exp
 import { Finding, buildFindings } from '../insight/findings';
 import { DayRecord } from '../engine/day-meter';
 import { AccountInput, DayAccount, buildAccount } from '../insight/account';
-import { DayLedger, buildDayLedger } from '../insight/ledger';
+import { Session, inRhythmSlot, kindLabel, sessionsOf } from '../insight/appliances';
+import { DayLedger, activationEnergy, buildDayLedger } from '../insight/ledger';
 import { dayBounds } from '../insight/time';
 import { HeatingSignature, TemperatureBook, heatingSignature } from '../insight/weather';
 import { METERED, MeteredDevices, MeteredStatus } from './metered';
@@ -27,6 +28,8 @@ export const ANALYSIS = {
   REFERENCE_TOL_MS: 6 * 60_000,
   /** A load whose runs are at least this share metered devices' runs is named after them. */
   METERED_RUN_SHARE: 0.8,
+  /** An unnamed load whose runs are at least this share one appliance's pattern is suggested as it. */
+  APPLIANCE_RUN_SHARE: 0.6,
 };
 
 export interface UserSettings {
@@ -58,6 +61,21 @@ export interface LoadView {
   costPerMonth: number | null;
   running: boolean;
   count: number;
+  /** The appliance its runs look like (a typical pattern, unconfirmed), when it has no name. */
+  suggestion: string | null;
+}
+
+/** An appliance recognised by the pattern of its sessions, not yet confirmed by the user. */
+export interface ApplianceView {
+  label: string;
+  phases: string;
+  sessions: number;
+  lastStart: number;
+  kWhPerSession: number;
+  /** What the latest session looked like. */
+  reason: string;
+  /** Found loads whose runs these sessions mostly are. */
+  loadIds: string[];
 }
 
 export interface ExperimentView extends Experiment, ExperimentResult {
@@ -79,6 +97,8 @@ export interface Analysis {
   metered: MeteredStatus[];
   /** kWh per degree-day of otherwise unexplained energy, once the data show it. */
   heating: HeatingSignature | null;
+  /** Appliances recognised by pattern among the runs nothing else explains. */
+  appliances: ApplianceView[];
   /** The clusters themselves, for the live classification. */
   clusters: LoadCluster[];
 }
@@ -105,8 +125,9 @@ export function runningNow(engine: PowerEngine, clusters: LoadCluster[], now: nu
     .map(x => ({ t: x.st.t, w: x.st.delta[0] + x.st.delta[1] + x.st.delta[2], cluster: x.cluster }));
 }
 
-export function displayName(v: { name: string | null; phases: string; medianW: number }): string {
-  return v.name ?? `${Math.round(v.medianW / 10) * 10} W on ${v.phases}`;
+export function displayName(v: { name: string | null; phases: string; medianW: number; suggestion?: string | null }): string {
+  if (v.name) return v.name;
+  return v.suggestion ? `${v.suggestion} (likely)` : `${Math.round(v.medianW / 10) * 10} W on ${v.phases}`;
 }
 
 /**
@@ -205,6 +226,32 @@ export function analyse(
     return { name: byCount.map(id => refName.get(id) ?? id).join(' / '), id: byCount[0] };
   };
 
+  // Appliances by pattern, among the runs nothing explains yet: not a thermostat's (all day, on a
+  // rhythm), not a metered device's, not a load a device already named.
+  const explained = new Set<Activation>();
+  for (const c of clusters) {
+    const ids = runDevices.get(c.id) ?? [];
+    c.activations.forEach((a, i) => {
+      if (c.rhythmic || byLoad.has(c.id) || ids[i]) explained.add(a);
+    });
+  }
+  const rhythmic = clusters.filter(c => c.rhythmic);
+  const sessions = sessionsOf(
+    engine
+      .allActivations()
+      .filter(a => a.start >= from && a.start < now && !explained.has(a) && !meteredRun(a) && !inRhythmSlot(a, rhythmic))
+  ).filter(x => x.kinds.length);
+  const sessionOf = new Map<Activation, Session>();
+  sessions.forEach(x => x.activations.forEach(a => sessionOf.set(a, x)));
+  /** The pattern most of a load's runs fit, when they fit one. */
+  const suggestionFor = (c: LoadCluster): string | null => {
+    const labels = c.activations.map(a => sessionOf.get(a)).map(x => (x ? kindLabel(x.kinds) : null));
+    const counts = new Map<string, number>();
+    labels.forEach(l => l && counts.set(l, (counts.get(l) ?? 0) + 1));
+    const [top] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    return top && top[1] / c.activations.length >= ANALYSIS.APPLIANCE_RUN_SHARE ? top[0] : null;
+  };
+
   const loads: LoadView[] = clusters.map(c => {
     const m = byLoad.get(c.id);
     const mb = m ? null : meteredBy(c);
@@ -227,8 +274,41 @@ export function analyse(
       costPerMonth: avgPrice === null ? null : c.kWhPerDay * 30 * avgPrice,
       running: running.has(c.id),
       count: c.count,
+      suggestion: name ? null : suggestionFor(c),
     };
   });
+
+  const clustered = new Set(clusters.flatMap(c => c.activations));
+  const loadsOfLabel = (label: string) => loads.filter(l => l.suggestion === label).map(l => l.id);
+  const byLabel = new Map<string, Session[]>();
+  sessions.forEach(x => byLabel.set(kindLabel(x.kinds), [...(byLabel.get(kindLabel(x.kinds)) ?? []), x]));
+  const appliances: ApplianceView[] = [...byLabel.entries()]
+    .map(([label, xs]) => {
+      const last = xs[xs.length - 1];
+      return {
+        label,
+        phases: last.phases,
+        sessions: xs.length,
+        lastStart: last.start,
+        kWhPerSession: xs.reduce((t, x) => t + x.kWh, 0) / xs.length,
+        reason: last.reason,
+        loadIds: loadsOfLabel(label),
+      };
+    })
+    .sort((a, b) => b.kWhPerSession * b.sessions - a.kWhPerSession * a.sessions);
+  /** Energy of recognised runs that no found load holds, per label, on one day. */
+  const applianceKWh = (date: string): Array<{ label: string; kWh: number }> => {
+    const b = dayBounds(date, s.timeZone);
+    const out = new Map<string, number>();
+    for (const x of sessions) {
+      for (const a of x.activations) {
+        if (clustered.has(a)) continue;
+        const kWh = activationEnergy(a, b.start, b.end).kWh;
+        if (kWh > 0) out.set(kindLabel(x.kinds), (out.get(kindLabel(x.kinds)) ?? 0) + kWh);
+      }
+    }
+    return [...out.entries()].map(([label, kWh]) => ({ label, kWh }));
+  };
 
   const names = Object.fromEntries(loads.filter(l => l.name).map(l => [l.id, l.name as string]));
   const heatPumpLoadIds = loads
@@ -254,7 +334,11 @@ export function analyse(
       metered: sources.metered?.energyOn(l.date) ?? [],
       alwaysOnKWh: l.baseloadKWh,
       alwaysOnW: l.baseloadW,
-      loads: l.loads.map(r => ({ loadId: r.loadId, name: loadName.get(r.loadId) ?? r.loadId, kWh: r.kWh, deviceId: byLoad.get(r.loadId)?.referenceId ?? null })),
+      loads: [
+        ...l.loads.map(r => ({ loadId: r.loadId, name: loadName.get(r.loadId) ?? r.loadId, kWh: r.kWh, deviceId: byLoad.get(r.loadId)?.referenceId ?? null })),
+        // Seen too seldom to be a load yet, but shaped like an appliance.
+        ...applianceKWh(l.date).map(x => ({ loadId: `appliance:${x.label}`, name: `${x.label} (likely)`, kWh: x.kWh, deviceId: null })),
+      ],
       weatherKWh: null,
     };
   };
@@ -308,6 +392,7 @@ export function analyse(
     accounts,
     metered: sources.metered?.status() ?? [],
     heating,
+    appliances,
     clusters,
   };
 }
