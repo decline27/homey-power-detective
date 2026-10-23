@@ -13,6 +13,7 @@
  * setup and catches devices whose reports do not match the house meter (behind solar, wrong).
  */
 import { localDate } from '../engine/day-meter';
+import { dayBounds } from '../insight/time';
 import { Reading } from '../engine/engine';
 import { Vec3 } from '../engine/types';
 
@@ -47,6 +48,13 @@ export const METERED = {
   MAX_GAP_MS: 90_000,
   /** A counter step above this (kWh) is a new counter, not energy. */
   MAX_COUNTER_STEP_KWH: 50,
+  /**
+   * A counter step is spread over the time since the counter last moved when that is at most this
+   * long (ms) and the step is at least ON_W on average over it: MELCloud goes quiet for hours, then
+   * reports the night's energy in one step. Longer, or less on average, and the device was idle:
+   * the step is booked when it came (an EV charger after a week off).
+   */
+  MAX_SPREAD_MS: 24 * 3_600_000,
   KEEP_DAYS: 35,
 };
 
@@ -61,7 +69,8 @@ interface Device {
   name: string;
   w: number | null;
   at: number;
-  counter: { kWh: number; at: number } | null;
+  /** The latest reading, and when the value last changed. */
+  counter: { kWh: number; at: number; changedAt?: number } | null;
   hasCounter: boolean;
   outcomes: Outcome[];
   live: boolean;
@@ -128,13 +137,29 @@ export class MeteredDevices {
     const d = this.device(id);
     d.hasCounter = true;
     const prev = d.counter;
-    d.counter = { kWh, at: t };
+    const changedAt = prev && kWh === prev.kWh ? prev.changedAt ?? prev.at : t;
+    d.counter = { kWh, at: t, changedAt };
     if (!prev || t <= prev.at) return;
     let delta = kWh - prev.kWh;
-    // A counter that starts again from zero (daily counters): the new value is the energy since.
-    if (delta < 0) delta = kWh < METERED.MAX_COUNTER_STEP_KWH ? kWh : 0;
-    if (delta > METERED.MAX_COUNTER_STEP_KWH) return;
-    this.add(d, t, delta);
+    let from = prev.changedAt ?? prev.at;
+    // A counter that starts again from zero (daily counters): the new value is the energy since,
+    // which is the new day's.
+    if (delta < 0) {
+      delta = kWh < METERED.MAX_COUNTER_STEP_KWH ? kWh : 0;
+      from = Math.max(from, dayBounds(localDate(t, this.timeZone), this.timeZone).start);
+    }
+    if (delta > METERED.MAX_COUNTER_STEP_KWH || delta <= 0) return;
+    const span = t - from;
+    if (span <= 0 || span > METERED.MAX_SPREAD_MS || (delta * 3.6e9) / span < METERED.ON_W) {
+      this.add(d, t, delta);
+      return;
+    }
+    // Evenly over the time it built up in, day by day.
+    for (let at = from; at < t; ) {
+      const end = Math.min(t, dayBounds(localDate(at, this.timeZone), this.timeZone).end);
+      this.add(d, at, (delta * (end - at)) / span);
+      at = end;
+    }
   }
 
   private add(d: Device, t: number, kWh: number): void {
@@ -314,7 +339,10 @@ export class MeteredDevices {
         name: String(d.name ?? d.id),
         w: Number.isFinite(d.w) ? d.w : null,
         at: Number(d.at) || 0,
-        counter: d.counter && Number.isFinite(d.counter.kWh) ? { kWh: d.counter.kWh, at: Number(d.counter.at) || 0 } : null,
+        counter:
+          d.counter && Number.isFinite(d.counter.kWh)
+            ? { kWh: d.counter.kWh, at: Number(d.counter.at) || 0, changedAt: Number(d.counter.changedAt ?? d.counter.at) || 0 }
+            : null,
         hasCounter: d.hasCounter === true,
         outcomes: Array.isArray(d.outcomes) ? d.outcomes.slice(-METERED.OUTCOMES) : [],
         live: d.live === true,

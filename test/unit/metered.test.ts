@@ -173,28 +173,52 @@ describe('energy per device and day', () => {
     const md = new MeteredDevices('Europe/Stockholm');
     md.counter('easee', 12000, T0 - 2 * MIN);
     md.power('easee', 'Easee ladder', 0, T0 - 2 * MIN);
-    md.counter('easee', 12003.5, T0 + 60 * MIN); // 3.5 kWh on 6 Oct
-    md.counter('easee', 12010, T0 + 23 * 60 * MIN); // 6.5 more
-    md.counter('easee', 12011, T0 + 25 * 60 * MIN); // 1 kWh on 7 Oct
+    // Each step is spread over the time since the counter last moved (it built up over it).
+    md.counter('easee', 12003.5, T0 + 60 * MIN); // 3.5 kWh over 62 min: 2 of them on 5 Oct
+    md.counter('easee', 12010, T0 + 23 * 60 * MIN); // 6.5 more, on 6 Oct
+    md.counter('easee', 12011, T0 + 25 * 60 * MIN); // 1 kWh over 2 h across midnight: half each
     md.counter('easee', 99999, T0 + 26 * 60 * MIN); // a new counter: not 87988 kWh
-    md.counter('easee', 100000, T0 + 27 * 60 * MIN); // 1 kWh
+    md.counter('easee', 100000, T0 + 27 * 60 * MIN); // 1 kWh, on 7 Oct
     // MELCloud style: a counter that starts from zero again each day.
     md.power('hp', 'Värmepump', 0, T0);
     md.counter('hp', 46, T0 + 60 * MIN);
     md.counter('hp', 48.5, T0 + 20 * 60 * MIN); // 2.5
-    md.counter('hp', 0.4, T0 + 24 * 60 * MIN + 30 * MIN); // reset at midnight, 0.4 since
+    md.counter('hp', 0.4, T0 + 24 * 60 * MIN + 30 * MIN); // reset at midnight, 0.4 since: all on the new day
+    const first = (3.5 * 2) / 62;
+    expect(md.energyOn('2026-10-05')).toEqual([{ id: 'easee', name: 'Easee ladder', kWh: expect.closeTo(first, 6) }]);
     expect(md.energyOn('2026-10-06')).toEqual(
       expect.arrayContaining([
-        { id: 'easee', name: 'Easee ladder', kWh: expect.closeTo(10, 6) },
+        { id: 'easee', name: 'Easee ladder', kWh: expect.closeTo(3.5 - first + 6.5 + 0.5, 6) },
         { id: 'hp', name: 'Värmepump', kWh: expect.closeTo(2.5, 6) },
       ])
     );
     expect(md.energyOn('2026-10-07')).toEqual(
       expect.arrayContaining([
-        { id: 'easee', name: 'Easee ladder', kWh: expect.closeTo(2, 6) },
+        { id: 'easee', name: 'Easee ladder', kWh: expect.closeTo(1.5, 6) },
         { id: 'hp', name: 'Värmepump', kWh: expect.closeTo(0.4, 6) },
       ])
     );
+  });
+
+  test('MELCloud quiet overnight: the morning step is the energy of the night, on both days', () => {
+    const md = new MeteredDevices('Europe/Stockholm');
+    md.power('hp', 'Heatpump', 0, T0 - 6 * 60 * MIN);
+    md.counter('hp', 53.339, T0 - 6 * 60 * MIN); // 18:00, then the same value every minute
+    for (let m = -6 * 60 + 1; m < 7 * 60; m += 10) md.counter('hp', 53.339, T0 + m * MIN);
+    md.counter('hp', 57.139, T0 + 7 * 60 * MIN); // 07:00: 3.8 kWh in one step
+    expect(md.energyOn('2026-10-05')[0].kWh).toBeCloseTo((3.8 * 6) / 13, 6);
+    expect(md.energyOn('2026-10-06')[0].kWh).toBeCloseTo((3.8 * 7) / 13, 6);
+  });
+
+  test('a charger idle for a week books its first step when it comes', () => {
+    const md = new MeteredDevices('Europe/Stockholm');
+    md.power('easee', 'Easee ladder', 0, T0 - 7 * 24 * 60 * MIN);
+    md.counter('easee', 12000, T0 - 7 * 24 * 60 * MIN);
+    md.counter('easee', 12000.2, T0 + 60 * MIN);
+    expect(md.energyOn('2026-10-06')[0].kWh).toBeCloseTo(0.2, 6);
+    // Also within a day: 0.02 kWh over 20 h is no device running all along.
+    md.counter('easee', 12000.22, T0 + 21 * 60 * MIN);
+    expect(md.energyOn('2026-10-06')[0].kWh).toBeCloseTo(0.22, 6);
   });
 
   test('without a counter: power integrated over the readings', () => {
