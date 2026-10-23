@@ -47,6 +47,13 @@
 </head>
 <body>
   <div id="status" class="muted">Loading…</div>
+  <!-- Outside the lists the minute refresh rebuilds, so it stays while it is filled in. -->
+  <div class="card hidden" id="testform" style="margin-top:8px">
+    <div class="name" id="tf-title"></div>
+    <label for="tf-label">What will you switch off? Leave it off until the test ends.</label>
+    <input id="tf-label" placeholder="e.g. Bathroom floor heating" />
+    <div class="row"><button class="primary" id="tf-start">Start test</button><button id="tf-cancel">Cancel</button></div>
+  </div>
   <div class="kpis" style="margin-top:8px">
     <div class="kpi"><b id="k-explained">–</b><span>of energy accounted for (7 days)</span></div>
     <div class="kpi"><b id="k-kwh">–</b><span>kWh per day</span></div>
@@ -108,7 +115,7 @@
   const r = (x, d = 0) => (x === null || x === undefined || !isFinite(x)) ? '–' : (Math.round(x * 10 ** d) / 10 ** d).toLocaleString();
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const nameOf = l => l.name || (l.suggestion ? `${l.suggestion} (likely)` : `${Math.round(l.medianW / 10) * 10} W on ${l.phases}`);
-  let H = null, state = null, filled = false;
+  let H = null, state = null, filled = false, pendingTest = null;
 
   function api(method, path, body) {
     return new Promise((res, rej) => H.api(method, path, body || null, (e, v) => e ? rej(e) : res(v)));
@@ -176,6 +183,7 @@
     const f0 = s.findings[0];
     document.getElementById('k-top').textContent = f0 && (f0.savingPerMonth ?? f0.costPerMonth) !== null ? `${r(f0.savingPerMonth ?? f0.costPerMonth)} ${cur}` : '–';
 
+    const testing = id => s.experiments.some(e => e.loadId === id && e.status === 'running');
     chart(s.accounts);
     meteredCard(s.metered, s.accounts[s.accounts.length - 1]);
 
@@ -186,7 +194,7 @@
         <div class="row" style="align-items:center">
           ${f.savingPerMonth !== null ? `<span class="money">Save ~${r(f.savingPerMonth)} ${esc(cur)}/month</span>` : f.costPerMonth !== null ? `<span class="money">${r(f.costPerMonth)} ${esc(cur)}/month</span>` : ''}
           <span class="chip">${esc(f.confidence)} confidence</span>
-          ${f.loadId && f.experimentHours ? `<button data-test="${esc(f.loadId)}" data-hours="${f.experimentHours}">Test it (${f.experimentHours} h)</button>` : ''}
+          ${f.loadId && f.experimentHours ? (testing(f.loadId) ? '<span class="status-running">Test running</span>' : `<button data-test="${esc(f.loadId)}" data-hours="${f.experimentHours}">Test it (${f.experimentHours} h)</button>`) : ''}
         </div>
       </div>`).join('') : '<div class="card muted">Nothing yet: findings need a day or two of data.</div>';
 
@@ -200,13 +208,13 @@
           <div class="muted" style="font-size:12px">
             <span class="chip">${esc(l.phases)}</span>${r(l.medianW, -1)} W · ${r(l.medianMinutes)} min runs · ${r(l.startsPerDay, 1)}/day
             ${l.rhythmic ? ` · every ${r(l.periodMinutes)} min` : ''}
-            ${l.source === 'device' ? ` · matches <b>${esc(l.device)}</b> (F1 ${r(l.score.f1, 2)})` : ''}
+            ${l.source === 'device' ? (l.score ? ` · matches <b>${esc(l.device)}</b> (F1 ${r(l.score.f1, 2)})` : ` · runs with <b>${esc(l.device)}</b>, counted by its meter`) : ''}
             ${l.source === 'test' ? ' · confirmed by your test' : ''}
           </div>
           ${l.suggestion ? `<div class="row" style="align-items:center"><span class="muted" style="font-size:12px">Looks like: <b>${esc(l.suggestion)}</b></span>
             <button data-use="${esc(l.id)}" data-label="${esc(l.suggestion)}">That's right</button></div>` : ''}
           <div class="row"><input data-name="${esc(l.id)}" value="${esc(l.source === 'user' ? l.name : '')}" placeholder="Name it (e.g. Kitchen floor)" />
-            <button data-test="${esc(l.id)}">Test</button></div>
+            ${testing(l.id) ? '<span class="status-running" style="white-space:nowrap">Test running</span>' : `<button data-test="${esc(l.id)}">Test</button>`}</div>
         </div>
         <div class="right"><b>${r(l.kWhPerDay, 1)}</b> kWh/day<br><span class="muted">${l.costPerMonth !== null ? `${r(l.costPerMonth)} ${esc(cur)}/mo` : ''}</span></div>
       </div>`).join('') : '<span class="muted">No loads yet. The first ones appear after a few hours.</span>';
@@ -246,13 +254,28 @@
   document.addEventListener('click', async ev => {
     const u = ev.target.closest('[data-use]');
     if (u) { await api('POST', '/name', { loadId: u.dataset.use, name: u.dataset.label }); reload(); return; }
+    // A form on the page, not prompt(): the Homey app's settings view does not show browser dialogs.
+    const form = document.getElementById('testform');
     const t = ev.target.closest('[data-test]');
     if (t) {
       const load = state.loads.find(l => l.id === t.dataset.test);
-      const label = prompt(`What did you switch off? Leave it off for the test (${t.dataset.hours || 'a few'} hours).`, load && load.name ? load.name : '');
-      if (label === null) return;
-      await api('POST', '/test', { loadId: t.dataset.test, label, hours: Number(t.dataset.hours) || undefined });
-      reload();
+      pendingTest = { loadId: t.dataset.test, hours: Number(t.dataset.hours) || undefined };
+      document.getElementById('tf-title').textContent = `Test: ${load ? nameOf(load) : t.dataset.test}${pendingTest.hours ? ` (${pendingTest.hours} h)` : ''}`;
+      document.getElementById('tf-label').value = load && load.name ? load.name : '';
+      form.classList.remove('hidden');
+      form.scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('tf-label').focus();
+      return;
+    }
+    if (ev.target.id === 'tf-cancel') { form.classList.add('hidden'); pendingTest = null; return; }
+    if (ev.target.id === 'tf-start' && pendingTest) {
+      ev.target.disabled = true;
+      try {
+        await api('POST', '/test', { ...pendingTest, label: document.getElementById('tf-label').value });
+        form.classList.add('hidden');
+        pendingTest = null;
+        reload();
+      } finally { ev.target.disabled = false; }
     }
   });
   document.addEventListener('change', async ev => {

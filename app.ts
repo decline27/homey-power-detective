@@ -464,6 +464,12 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   }
 
   startExperiment(loadId: string, label: string, hours?: number): Experiment {
+    // One test per load at a time: a second press (or a page that did not show it started) is the same test.
+    const now = Date.now();
+    const running = ((this.homey.settings.get(SETTINGS.experiments) as Experiment[]) ?? []).find(
+      e => e.loadId === loadId && now < e.startedAt + e.hours * 3_600_000
+    );
+    if (running) return running;
     const load = this.analysis?.loads.find(l => l.id === loadId);
     const rate = load ? load.startsPerDay / 24 : 0;
     const exp: Experiment = {

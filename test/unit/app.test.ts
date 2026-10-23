@@ -131,8 +131,11 @@ test('live values become readings; loads, flows, actions and saved state work en
   expect(app.isRunning('nope')).toBe(false);
   expect(await homey.autocomplete.get('load_running')!('', {})).toHaveLength(view.loads.length);
   expect(await homey.run.get('start_test')!({ load: { id: heater.id }, label: 'thermostat', hours: 3 })).toBe(true);
+  // A second press while that test runs is the same test, not another one.
   const exp = app.startExperiment(heater.id, 'kitchen thermostat');
-  expect(exp.hours).toBeGreaterThanOrEqual(2);
+  expect(exp.label).toBe('thermostat');
+  expect(exp.hours).toBe(3);
+  expect(app.startExperiment(heater.id, '').id).toBe(exp.id);
   expect(app.pairableLoads().length).toBeGreaterThan(0);
   app.setName(heater.id, '');
   const summary = await app.writeSummary(true);
