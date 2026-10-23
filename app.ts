@@ -52,6 +52,7 @@ interface SavedState {
   metered?: unknown;
   house?: DayRecord[];
   temps?: unknown;
+  deviceMatches?: Record<string, string>;
 }
 
 /** Devices reporting outdoor temperature, best first. */
@@ -74,6 +75,8 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   private timers: any[] = [];
   private analysis: Analysis | null = null;
   private findingsSeen = new Set<string>();
+  /** Loads tied to a device by timing, kept between analyses so a borderline match does not flip. */
+  private deviceMatches: Record<string, string> = {};
   private summaryAt = 0;
   private status = 'Starting';
   private timeZone = 'Europe/Stockholm';
@@ -91,6 +94,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.house.restore(Array.isArray(saved?.house) ? saved!.house : []);
     this.temps = TemperatureBook.restore(saved?.temps);
     this.findingsSeen = new Set(Array.isArray(saved?.findingsSeen) ? saved!.findingsSeen : []);
+    this.deviceMatches = saved?.deviceMatches && typeof saved.deviceMatches === 'object' ? { ...saved.deviceMatches } : {};
     this.summaryAt = Number(saved?.summaryAt) || 0;
 
     this.registerFlows();
@@ -301,7 +305,9 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       house: this.house.all(),
       metered: this.metered,
       temps: this.temps,
+      deviceMatches: this.deviceMatches,
     });
+    this.deviceMatches = this.analysis.deviceMatches;
     for (const f of this.analysis.findings) {
       if (this.findingsSeen.has(f.id)) continue;
       this.findingsSeen.add(f.id);
@@ -530,6 +536,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
         metered: this.metered.snapshot(),
         house: this.house.all(),
         temps: this.temps.snapshot(),
+        deviceMatches: this.deviceMatches,
       };
       fs.writeFileSync(`${STATE_FILE}.tmp`, JSON.stringify(state));
       fs.renameSync(`${STATE_FILE}.tmp`, STATE_FILE);

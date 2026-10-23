@@ -1,5 +1,6 @@
 import { analyse, displayName, meteredRunOf, nameFromDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
+import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
 import { PriceBook } from '../../src/homey/prices';
 import { ReferenceTracker } from '../../src/homey/references';
@@ -211,6 +212,32 @@ describe('analysis', () => {
     const loadRows = day.rows.filter(r => r.kind === 'load');
     expect(loadRows).toHaveLength(1);
     expect(Math.abs(loadRows[0].kWh - kWh(floorOn, 1330)) / kWh(floorOn, 1330)).toBeLessThan(0.15);
+  });
+
+  test('a heat pump whose reports miss its short runs keeps its name once it had one; silence is not "off"', () => {
+    const { clusterActivations } = jest.requireActual('../../src/engine/clustering');
+    const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
+    // 40 compressor runs of 4 min, one every 30 min. MELCloud polls every 5 min: it reports 26.
+    const starts = Array.from({ length: 40 }, (_, i) => T0 + i * 30 * MIN);
+    const loads = clusterActivations(starts.map(s => ({ start: s, end: s + 4 * MIN, delta: v(250, 250, 250) })));
+    const reported = starts.filter((_, i) => i % 3 !== 2).map(s => ({ start: s + 3 * MIN, end: s + 8 * MIN }));
+    const ref = { id: 'hp', name: 'Heatpump', intervals: reported };
+    expect(nameFromDevices(loads, [ref])).toEqual([]); // precision 0.65: not enough to name it
+    const kept = nameFromDevices(loads, [ref], { [loads[0].id]: 'hp' });
+    expect(kept.map(m => m.referenceName)).toEqual(['Heatpump']); // enough to keep it
+
+    // Reports stop for the last 8 hours while the compressor runs on: no run there counts against it.
+    const quiet = reported.filter(i => i.start < T0 + 12 * 60 * MIN);
+    const silent = silentStretches(quiet, T0 + 20 * 60 * MIN);
+    expect(silent).toHaveLength(1);
+    expect(silent[0].end).toBe(T0 + 20 * 60 * MIN);
+    const keep = { [loads[0].id]: 'hp' };
+    expect(nameFromDevices(loads, [{ ...ref, intervals: quiet }], keep)).toEqual([]); // silence read as "off": 16 misses
+    const withSilence = nameFromDevices(loads, [{ ...ref, intervals: quiet, silent }], keep);
+    expect(withSilence.map(m => m.referenceName)).toEqual(['Heatpump']);
+    expect(withSilence[0].score.fp).toBeLessThanOrEqual(9); // only the runs MELCloud missed while reporting
+    // A device used once a day is not silent between uses.
+    expect(silentStretches(Array.from({ length: 10 }, (_, d) => ({ start: T0 + d * 86_400_000, end: T0 + d * 86_400_000 + 60 * MIN })), T0 + 10 * 86_400_000)).toEqual([]);
   });
 
   test('a run is a metered device only on its phases and at its switch-on', () => {

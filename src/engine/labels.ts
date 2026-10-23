@@ -5,13 +5,42 @@
  * seeing only the house meter, finds each metered device.
  */
 import { SESSIONS } from './config';
-import { Interval, Score, asIntervals, matchIntervals, sessions } from './score';
+import { Interval, Score, matchIntervals, sessions } from './score';
 import { LoadCluster } from './types';
 
 export interface Reference {
   id: string;
   name: string;
   intervals: Interval[];
+  /** Stretches the device did not report in: its silence there is not "off", so runs there score nothing. */
+  silent?: Interval[];
+}
+
+export const SILENCE = {
+  /** A device quiet this many times its usual time between changes is not reporting... */
+  FACTOR: 6,
+  /** ...and never sooner than this (ms). */
+  MIN_MS: 2 * 3_600_000,
+  /** On/off changes needed to know a device's usual time between them. */
+  MIN_CHANGES: 10,
+};
+
+/**
+ * Where a device went quiet far longer than it ever does: MELCloud stops reporting the heat
+ * pump's power for hours while the house meter still sees it run. A device used once a day
+ * changes about twice a day, so its usual gap is long and its quiet days are not silences.
+ */
+export function silentStretches(intervals: Interval[], now: number, cfg = SILENCE): Interval[] {
+  const runs = [...intervals].sort((a, b) => a.start - b.start);
+  if (runs.length < cfg.MIN_CHANGES / 2) return [];
+  // The usual time from one switch-on to the next: its cycle, not the on-times within it.
+  const cycles = runs.slice(1).map((r, i) => r.start - runs[i].start).sort((a, b) => a - b);
+  const limit = Math.max(cfg.MIN_MS, cfg.FACTOR * cycles[cycles.length >> 1]);
+  const out: Interval[] = [];
+  const quiet = (from: number, to: number) => to - from > limit && out.push({ start: from, end: to });
+  runs.slice(1).forEach((r, i) => quiet(runs[i].end, r.start));
+  quiet(runs[runs.length - 1].end, Math.max(now, runs[runs.length - 1].end));
+  return out;
 }
 
 export interface LabelMatch {
@@ -86,31 +115,47 @@ export function chancePrecision(refRuns: Interval[], ownRuns: Interval[], tolMs:
   return p.reduce((a, b) => a + b, 0) / p.length;
 }
 
+/**
+ * A load's runs as intervals. A run far longer than the load runs is a missed stop (its start
+ * paired with a much later stop): it is its start, at the load's typical length, as the ledger
+ * counts it.
+ */
+const runIntervals = (c: LoadCluster): Interval[] =>
+  c.activations.map(a =>
+    a.end - a.start > (c.maxMinutes ?? Infinity) * 60_000 ? { start: a.start, end: a.start + c.medianMinutes * 60_000 } : { start: a.start, end: a.end }
+  );
+
+/** A run that starts while the device was not reporting can neither match nor miss it. */
+const heardBy = (ref: Reference, tolMs: number) => (r: Interval) =>
+  !(ref.silent ?? []).some(s => r.start > s.start + tolMs && r.start < s.end);
+
 export function matchReferences(clusters: LoadCluster[], refs: Reference[], opts: MatchOptions): LabelMatch[] {
   const gapMs = opts.gapMs ?? SESSIONS.GAP_MS;
   const minPrecision = opts.minPrecision ?? 0.7;
   const minF1 = opts.minF1 ?? 0.5;
   const ratio = opts.maxDurationRatio ?? 3;
-  const runs = new Map(clusters.map(c => [c.id, sessions(asIntervals(c.activations), gapMs)]));
+  const runs = new Map(clusters.map(c => [c.id, sessions(runIntervals(c), gapMs)]));
 
   const candidates: Array<LabelMatch> = [];
   for (const ref of refs) {
     const refRuns = sessions(ref.intervals, gapMs);
     if (refRuns.length === 0) continue;
+    const heard = heardBy(ref, opts.tolMs);
+    const own = (c: LoadCluster) => (runs.get(c.id) ?? []).filter(heard);
+    const runsOf = (cs: LoadCluster[]) => sessions(cs.flatMap(runIntervals), gapMs).filter(heard);
     const beatsChance = (c: LoadCluster, s: Score) => {
       if (opts.alpha === undefined) return true;
-      const own = runs.get(c.id) ?? [];
-      return binomialTail(s.tp, own.length, chancePrecision(refRuns, own, opts.tolMs, ratio)) <= opts.alpha;
+      return binomialTail(s.tp, own(c).length, chancePrecision(refRuns, own(c), opts.tolMs, ratio)) <= opts.alpha;
     };
     const ranked = clusters
-      .map(c => ({ c, s: matchIntervals(refRuns, runs.get(c.id) ?? [], opts.tolMs, ratio) }))
+      .map(c => ({ c, s: matchIntervals(refRuns, own(c), opts.tolMs, ratio) }))
       .filter(x => x.s.tp >= 2 && x.s.precision >= minPrecision && beatsChance(x.c, x.s))
       .sort((a, b) => b.s.tp - a.s.tp || b.s.precision - a.s.precision);
 
     if (opts.parts) {
       if (ranked.length === 0) continue;
       const all = ranked.map(x => x.c);
-      const score = matchIntervals(refRuns, sessions(all.flatMap(x => asIntervals(x.activations)), gapMs), opts.tolMs, ratio);
+      const score = matchIntervals(refRuns, runsOf(all), opts.tolMs, ratio);
       candidates.push({ referenceId: ref.id, referenceName: ref.name, clusterIds: all.map(c => c.id), score });
       continue;
     }
@@ -120,7 +165,7 @@ export function matchReferences(clusters: LoadCluster[], refs: Reference[], opts
     let best: Score | null = null;
     for (const { c } of ranked) {
       const trial = [...chosen, c];
-      const s = matchIntervals(refRuns, sessions(trial.flatMap(x => asIntervals(x.activations)), gapMs), opts.tolMs, ratio);
+      const s = matchIntervals(refRuns, runsOf(trial), opts.tolMs, ratio);
       if (!best || s.f1 > best.f1) {
         chosen = trial;
         best = s;
@@ -145,7 +190,8 @@ export function matchReferences(clusters: LoadCluster[], refs: Reference[], opts
     }
     const ref = refs.find(r => r.id === m.referenceId)!;
     const own = clusters.filter(c => free.includes(c.id));
-    const score = matchIntervals(sessions(ref.intervals, gapMs), sessions(own.flatMap(c => asIntervals(c.activations)), gapMs), opts.tolMs, ratio);
+    const ownRuns = sessions(own.flatMap(runIntervals), gapMs).filter(heardBy(ref, opts.tolMs));
+    const score = matchIntervals(sessions(ref.intervals, gapMs), ownRuns, opts.tolMs, ratio);
     if (opts.parts || score.f1 >= minF1) out.push({ ...m, clusterIds: free, score });
   }
   return out;

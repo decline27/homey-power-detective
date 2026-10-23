@@ -4,7 +4,7 @@
  */
 import { classify } from '../engine/clustering';
 import { PowerEngine } from '../engine/engine';
-import { LabelMatch, Reference, matchReferences } from '../engine/labels';
+import { LabelMatch, Reference, matchReferences, silentStretches } from '../engine/labels';
 import { Score } from '../engine/score';
 import { CLUSTERING } from '../engine/config';
 import { Activation, LoadCluster, Vec3, activationW } from '../engine/types';
@@ -28,6 +28,10 @@ export const ANALYSIS = {
   REFERENCE_TOL_MS: 6 * 60_000,
   /** A load whose runs are at least this share metered devices' runs is named after them. */
   METERED_RUN_SHARE: 0.8,
+  /** A load tied to a device keeps it while this share of its runs still start with the device's... */
+  KEEP_PRECISION: 0.5,
+  /** ...over at least this many of them. */
+  KEEP_MIN_MATCHES: 3,
   /** An unnamed load whose runs are at least this share one appliance's pattern is suggested as it. */
   APPLIANCE_RUN_SHARE: 0.6,
 };
@@ -99,6 +103,8 @@ export interface Analysis {
   heating: HeatingSignature | null;
   /** Appliances recognised by pattern among the runs nothing else explains. */
   appliances: ApplianceView[];
+  /** Device each load is tied to by timing, by load id: kept for the next analysis (hysteresis). */
+  deviceMatches: Record<string, string>;
   /** The clusters themselves, for the live classification. */
   clusters: LoadCluster[];
 }
@@ -109,6 +115,8 @@ export interface Sources {
   house?: DayRecord[];
   metered?: MeteredDevices;
   temps?: TemperatureBook;
+  /** The previous analysis's `deviceMatches`. */
+  deviceMatches?: Record<string, string>;
 }
 
 const HEAT_PUMP_NAME = /heat ?pump|värmepump|varmepump|ecodan|nibe|thermia/i;
@@ -135,15 +143,28 @@ export function displayName(v: { name: string | null; phases: string; medianW: n
  * programme (a dishwasher's heater, a modulating heat pump's boost), also of a device already
  * matched. A load is only tied to a device when its matches would be unlikely by chance (p ≤ 0.02).
  */
-export function nameFromDevices(loads: LoadCluster[], refs: Reference[]): LabelMatch[] {
-  const direct = matchReferences(loads, refs, { tolMs: ANALYSIS.REFERENCE_TOL_MS, gapMs: 2 * 60_000, maxDurationRatio: 3, alpha: 0.02 });
+export function nameFromDevices(loads: LoadCluster[], refs: Reference[], keep: Record<string, string> = {}): LabelMatch[] {
+  const directOpts = { tolMs: ANALYSIS.REFERENCE_TOL_MS, gapMs: 2 * 60_000, maxDurationRatio: 3 };
+  const direct = matchReferences(loads, refs, { ...directOpts, alpha: 0.02 });
   const usedLoads = new Set(direct.flatMap(m => m.clusterIds));
   const programmes = matchReferences(
     loads.filter(l => !usedLoads.has(l.id)),
     refs,
     { tolMs: 10 * 60_000, gapMs: 45 * 60_000, maxDurationRatio: Infinity, minPrecision: 0.8, alpha: 0.02, parts: true }
   );
-  return [...direct, ...programmes];
+  const found = [...direct, ...programmes];
+  // Hysteresis: a load once tied to a device stays tied while its runs still mostly start with the
+  // device's. MELCloud polls every 5 min and misses short compressor runs, so the heat pump's
+  // precision sits at the naming threshold and would otherwise flip in and out.
+  const named = new Set(found.flatMap(m => m.clusterIds));
+  const kept = Object.entries(keep).flatMap(([loadId, refId]) => {
+    const load = loads.find(l => l.id === loadId);
+    const ref = refs.find(r => r.id === refId);
+    if (named.has(loadId) || !load || !ref) return [];
+    const [m] = matchReferences([load], [ref], { ...directOpts, minPrecision: ANALYSIS.KEEP_PRECISION, minF1: 0 });
+    return m && m.score.tp >= ANALYSIS.KEEP_MIN_MATCHES ? [m] : [];
+  });
+  return [...found, ...kept];
 }
 
 /**
@@ -182,7 +203,11 @@ export function analyse(
   const clusters = engine.loads(from, now);
   // A device subtracted live is not in what detection sees: it cannot name a load there.
   const live = new Set((sources.metered?.status() ?? []).filter(m => m.live).map(m => m.id));
-  const matches = nameFromDevices(clusters, refs.filter(r => !live.has(r.id)));
+  const matches = nameFromDevices(
+    clusters,
+    refs.filter(r => !live.has(r.id)).map(r => ({ ...r, silent: silentStretches(r.intervals, now) })),
+    sources.deviceMatches
+  );
   const byLoad = new Map<string, LabelMatch>();
   matches.forEach(m => m.clusterIds.forEach(id => byLoad.set(id, m)));
 
@@ -393,6 +418,7 @@ export function analyse(
     metered: sources.metered?.status() ?? [],
     heating,
     appliances,
+    deviceMatches: Object.fromEntries([...byLoad.entries()].map(([id, m]) => [id, m.referenceId])),
     clusters,
   };
 }
