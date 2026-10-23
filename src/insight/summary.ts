@@ -4,6 +4,7 @@
  * numbers it is given. The detection never depends on the AI; the AI only explains.
  */
 import * as https from 'https';
+import { DayAccount } from './account';
 import { Finding } from './findings';
 
 export interface SummaryInput {
@@ -12,7 +13,8 @@ export interface SummaryInput {
   days: number;
   totalKWh: number;
   explainedShare: number;
-  loads: Array<{ name: string; kWhPerDay: number; costPerMonth: number | null; confirmed: boolean }>;
+  /** What used the energy: devices by their own meters, and found loads. */
+  loads: Array<{ name: string; kWhPerDay: number; costPerMonth: number | null; confirmed: boolean; metered?: boolean }>;
   findings: Finding[];
   /** Device matches and their scores: how much to trust the names. */
   validation: Array<{ device: string; f1: number }>;
@@ -20,22 +22,54 @@ export interface SummaryInput {
 
 const r = (x: number, d = 0) => Math.round(x * 10 ** d) / 10 ** d;
 
+/**
+ * The summary's numbers from the energy account, the same rows the settings page charts: every kWh
+ * once, a metered device by its own meter (exact), a found load by what is left. `confirmed` says
+ * whether a load row's name is known (named, matched to a device or confirmed by a test).
+ */
+export function accountFacts(
+  accounts: DayAccount[],
+  confirmed: (rowKey: string) => boolean,
+  avgPrice: number | null
+): Pick<SummaryInput, 'days' | 'totalKWh' | 'explainedShare' | 'loads'> {
+  const days = accounts.filter(d => d.coveredHours > 0);
+  const totalKWh = days.reduce((s, d) => s + d.totalKWh, 0);
+  const explained = days.reduce((s, d) => s + d.explainedShare * d.totalKWh, 0);
+  const dayCount = Math.max(days.reduce((s, d) => s + d.coveredHours, 0) / 24, 1 / 24);
+  const rows = new Map<string, { name: string; kWh: number; metered: boolean }>();
+  for (const d of days) {
+    for (const row of d.rows) {
+      if (row.kind !== 'metered' && row.kind !== 'load') continue;
+      const prev = rows.get(row.key);
+      rows.set(row.key, { name: row.name, kWh: (prev?.kWh ?? 0) + row.kWh, metered: row.kind === 'metered' });
+    }
+  }
+  const loads = [...rows.entries()]
+    .map(([key, x]) => ({
+      name: x.name,
+      kWhPerDay: x.kWh / dayCount,
+      costPerMonth: avgPrice === null ? null : (x.kWh / dayCount) * 30 * avgPrice,
+      confirmed: x.metered || confirmed(key),
+      metered: x.metered,
+    }))
+    .sort((a, b) => b.kWhPerDay - a.kWhPerDay);
+  return { days: days.length, totalKWh, explainedShare: totalKWh > 0 ? explained / totalKWh : 0, loads };
+}
+
 export function templateSummary(s: SummaryInput): string {
   const sv = s.language === 'sv';
   const top = s.findings[0];
   const lines: string[] = [];
   lines.push(
     sv
-      ? `Senaste ${s.days} dagarna: ${r(s.totalKWh)} kWh, varav ${r(s.explainedShare * 100)} % förklarat av hittade laster och baslasten.`
-      : `Last ${s.days} days: ${r(s.totalKWh)} kWh, ${r(s.explainedShare * 100)} % of it explained by found loads and the base load.`
+      ? `Senaste ${s.days} dagarna: ${r(s.totalKWh)} kWh, varav ${r(s.explainedShare * 100)} % förklarat av mätare, hittade laster och baslasten.`
+      : `Last ${s.days} days: ${r(s.totalKWh)} kWh, ${r(s.explainedShare * 100)} % of it accounted for by meters, found loads and the base load.`
   );
   const biggest = [...s.loads].sort((a, b) => b.kWhPerDay - a.kWhPerDay).slice(0, 3);
+  const tag = (l: SummaryInput['loads'][number]) =>
+    l.metered ? (sv ? ' (egen mätare)' : ' (own meter)') : l.confirmed ? '' : sv ? ' (obekräftad)' : ' (unconfirmed)';
   if (biggest.length) {
-    lines.push(
-      (sv ? 'Störst: ' : 'Biggest: ') +
-        biggest.map(l => `${l.name} ${r(l.kWhPerDay, 1)} kWh/${sv ? 'dygn' : 'day'}${l.confirmed ? '' : sv ? ' (obekräftad)' : ' (unconfirmed)'}`).join(', ') +
-        '.'
-    );
+    lines.push((sv ? 'Störst: ' : 'Biggest: ') + biggest.map(l => `${l.name} ${r(l.kWhPerDay, 1)} kWh/${sv ? 'dygn' : 'day'}${tag(l)}`).join(', ') + '.');
   }
   if (top) {
     const saving = top.savingPerMonth ?? top.costPerMonth;
@@ -112,16 +146,21 @@ export async function summarize(
   const { system, user } = claudePrompt(s);
   const body = JSON.stringify({
     model: SUMMARY_MODELS.includes(opts.model as (typeof SUMMARY_MODELS)[number]) ? opts.model : DEFAULT_SUMMARY_MODEL,
-    max_tokens: 400,
+    // These models think before they answer (thinking cannot be turned off on Opus 5.5), and the
+    // thinking counts against max_tokens: with 400 it could take them all and leave no text.
+    // Low effort suits rewording given numbers; the room is for the thinking, the answer is short.
+    max_tokens: 2000,
+    output_config: { effort: 'low' },
     system,
     messages: [{ role: 'user', content: user }],
   });
   try {
     const res = await (opts.transport ?? httpsTransport)(body, opts.apiKey);
     if (res.status !== 200) return { text: fallback, source: 'template', error: `Anthropic API ${res.status}` };
-    const parsed = JSON.parse(res.body) as { content?: Array<{ type: string; text?: string }> };
+    const parsed = JSON.parse(res.body) as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
     const text = (parsed.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('').trim();
-    return text ? { text, source: 'claude' } : { text: fallback, source: 'template', error: 'empty answer' };
+    if (text && parsed.stop_reason !== 'refusal') return { text, source: 'claude' };
+    return { text: fallback, source: 'template', error: `no answer (stop: ${parsed.stop_reason ?? 'unknown'})` };
   } catch (e) {
     return { text: fallback, source: 'template', error: (e as Error).message };
   }

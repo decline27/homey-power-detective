@@ -21,7 +21,7 @@ import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latest
 import { PRICE_CAPABILITIES, PriceBook } from './src/homey/prices';
 import { ReferenceTracker, isLoadDevice } from './src/homey/references';
 import { Experiment, hoursNeeded } from './src/insight/experiments';
-import { SummaryInput, summarize } from './src/insight/summary';
+import { SummaryInput, accountFacts, summarize } from './src/insight/summary';
 
 /** Homey keeps /userdata across restarts and updates. */
 const STATE_FILE = process.env.POWER_DETECTIVE_STATE ?? '/userdata/state.json';
@@ -362,16 +362,14 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   async writeSummary(notify: boolean): Promise<{ text: string; source: string; error?: string }> {
     const a = this.analysis ?? (await this.refresh());
     const s = this.homey.settings;
-    const days = a.days.filter(d => d.coveredHours > 0);
-    const total = days.reduce((x, d) => x + d.totalKWh, 0);
-    const explained = days.reduce((x, d) => x + d.explainedShare * d.totalKWh, 0);
+    // The same account the settings page shows: a metered device once, by its own meter.
+    const known = (key: string) => a.loads.some(l => `load:${l.id}` === key && l.source !== null);
+    const facts = accountFacts(a.accounts, known, a.avgPrice);
     const input: SummaryInput = {
       language: s.get(SETTINGS.language) === 'sv' ? 'sv' : 'en',
       currency: this.userSettings().currency,
-      days: days.length,
-      totalKWh: total,
-      explainedShare: total > 0 ? explained / total : 0,
-      loads: a.loads.slice(0, 8).map(l => ({ name: displayName(l), kWhPerDay: l.kWhPerDay, costPerMonth: l.costPerMonth, confirmed: l.source !== null })),
+      ...facts,
+      loads: facts.loads.slice(0, 8),
       findings: a.findings.slice(0, 5),
       validation: a.validation.map(v => ({ device: v.device, f1: v.score.f1 })),
     };

@@ -7,7 +7,7 @@ import { Activation, Vec3 } from '../../src/engine/types';
 import { evaluateExperiment, hoursNeeded, poissonCdf } from '../../src/insight/experiments';
 import { buildFindings, shiftSaving } from '../../src/insight/findings';
 import { activationEnergy, buildDayLedger } from '../../src/insight/ledger';
-import { summarize, templateSummary } from '../../src/insight/summary';
+import { accountFacts, summarize, templateSummary } from '../../src/insight/summary';
 import { dayBounds, hourStart, tzOffsetMs } from '../../src/insight/time';
 import { MIN, T0, every } from '../helpers/synth';
 
@@ -317,6 +317,32 @@ describe('summary', () => {
     expect((await summarize(input)).source).toBe('template');
     expect((await summarize(input, { apiKey: 'k', transport: async () => ({ status: 401, body: '' }) })).error).toBe('Anthropic API 401');
     expect((await summarize(input, { apiKey: 'k', transport: async () => { throw new Error('offline'); } })).error).toBe('offline');
-    expect((await summarize(input, { apiKey: 'k', transport: async () => ({ status: 200, body: '{"content":[]}' }) })).error).toBe('empty answer');
+    // The model thinks first, and thinking counts against max_tokens: low effort, and room for it.
+    expect(JSON.parse(sent).output_config).toEqual({ effort: 'low' });
+    expect(JSON.parse(sent).max_tokens).toBeGreaterThanOrEqual(2000);
+    // What a reply cut off while thinking looks like: an empty thinking block and no text.
+    const cut = JSON.stringify({ content: [{ type: 'thinking', thinking: '' }], stop_reason: 'max_tokens' });
+    expect((await summarize(input, { apiKey: 'k', transport: async () => ({ status: 200, body: cut }) })).error).toBe('no answer (stop: max_tokens)');
+    const refused = JSON.stringify({ content: [{ type: 'text', text: 'I cannot' }], stop_reason: 'refusal' });
+    expect((await summarize(input, { apiKey: 'k', transport: async () => ({ status: 200, body: refused }) })).source).toBe('template');
+  });
+
+  test('the facts come from the energy account: metered devices exact, "likely" appliances unconfirmed', () => {
+    const day = (date: string, rows: Array<[string, string, string, number]>) => ({
+      date, totalKWh: 34, coveredHours: 24, alwaysOnW: 360, explainedShare: 0.9, overlapKWh: 0,
+      rows: rows.map(([key, kind, name, kWh]) => ({ key, kind, name, kWh, exact: kind === 'metered', share: kWh / 34 })),
+    });
+    const accounts = [
+      day('2026-10-22', [['device:spa', 'metered', 'BWA Spa', 7], ['load:L1-72', 'load', 'Floor heating', 8], ['load:appliance:Kettle', 'load', 'Kettle (likely)', 0.1], ['always_on', 'always_on', 'Always on', 8.6], ['unexplained', 'unexplained', 'Unexplained', 3.4]]),
+      day('2026-10-23', [['device:spa', 'metered', 'BWA Spa', 5], ['load:L1-72', 'load', 'Floor heating', 10], ['always_on', 'always_on', 'Always on', 8.6]]),
+    ];
+    const f = accountFacts(accounts as any, key => key === 'load:L1-72', 2);
+    expect(f).toMatchObject({ days: 2, totalKWh: 68, explainedShare: 0.9 });
+    expect(f.loads.map(l => [l.name, l.kWhPerDay, l.confirmed, l.metered])).toEqual([
+      ['Floor heating', 9, true, false],
+      ['BWA Spa', 6, true, true],
+      ['Kettle (likely)', 0.05, false, false],
+    ]);
+    expect(templateSummary({ ...input, ...f })).toContain('BWA Spa 6 kWh/day (own meter)');
   });
 });
