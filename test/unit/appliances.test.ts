@@ -16,8 +16,32 @@ describe('appliances by the shape of a session', () => {
     expect(labels([act(0, 14, L1(2000)), act(64, 10, L1(1950))])).toEqual(['Dishwasher']);
   });
 
-  test('a washing machine: one 2 kW heat of 18 min', () => {
-    expect(labels([act(0, 18, L1(2100))])).toEqual(['Washing machine']);
+  test('one 2 kW heat: a washing machine, or an oven switched off before it cycled', () => {
+    expect(labels([act(0, 18, L1(2100))])).toEqual(['Washing machine or oven']);
+    // Longer than an oven heats up.
+    expect(labels([act(0, 30, L1(2100))])).toEqual(['Washing machine']);
+    // A heat, then the motor's heater burst: still either.
+    expect(labels([act(0, 18, L1(2100)), act(40, 2, L1(2100))])).toEqual(['Washing machine or oven']);
+  });
+
+  test('an oven switched off and on again, then cycling, is an oven', () => {
+    // Seen on the house 2026-10-23: 1.9 kW on L3 for 13 min, off for 40 s, on again.
+    const L3 = (w: number): Vec3 => [0, 0, w];
+    const oven = [act(0, 13, L3(1916)), act(13.7, 6, L3(1786)), act(26, 3, L3(1850)), act(36, 3, L3(1850))];
+    expect(labels(oven)).toEqual(['Oven']);
+  });
+
+  test('a session still going has no pattern yet', () => {
+    const heat = act(0, 13, [0, 0, 1916]);
+    const on = { t: T0 + 13.7 * MIN, settledAt: T0 + 13.7 * MIN, delta: [0, 0, 1786] as Vec3 };
+    // The element is on again: more runs will join.
+    expect(sessionsOf([heat], { now: T0 + 16 * MIN, open: [on] })[0].finished).toBe(false);
+    // Off, but within a session gap of its last run.
+    expect(sessionsOf([heat], { now: T0 + 60 * MIN, open: [] })[0].finished).toBe(false);
+    expect(sessionsOf([heat], { now: T0 + 90 * MIN, open: [] })[0].finished).toBe(true);
+    // A start left open for hours is a missed stop; another phase is another appliance.
+    expect(sessionsOf([heat], { now: T0 + 6 * 60 * MIN, open: [on] })[0].finished).toBe(true);
+    expect(sessionsOf([heat], { now: T0 + 90 * MIN, open: [{ ...on, delta: [1786, 0, 0] }] })[0].finished).toBe(true);
   });
 
   test('a condenser dryer: a 2.2 kW element cycling for 90 min', () => {

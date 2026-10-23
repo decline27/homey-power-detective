@@ -5,16 +5,18 @@
  *
  *   dishwasher        two heats of 4-30 min, 15-100 min apart (main wash, then rinse or drying)
  *   washing machine   one heat of 6-35 min at the start; the rest is motor
+ *                     (an oven heat-up switched off before it cycles looks the same)
  *   tumble dryer      a condenser dryer's element cycling on its thermostat for 40-200 min
  *   oven              one long heat-up, then short thermostat cycles
  *   kettle            one 1.6-3.2 kW run of 1-5 min
  *   microwave/toaster one 0.7-1.6 kW run of 1-8 min
  *
  * These are typical patterns, not learned from this house: every match is a suggestion the user
- * confirms (by naming the load), and a session that fits two patterns says so.
+ * confirms (by naming the load), and a session that fits two patterns says so. A session still
+ * going has no pattern yet: an oven's first heat is a washing machine's until the cycles come.
  */
 import { phaseLabel, phaseShare } from '../engine/clustering';
-import { Activation, LoadCluster, activationKWh, activationW } from '../engine/types';
+import { Activation, LoadCluster, StepEvent, activationKWh, activationW } from '../engine/types';
 
 export const APPLIANCES = {
   /** A run this big (W) is a heating element. */
@@ -23,6 +25,8 @@ export const APPLIANCES = {
   SESSION_GAP_MS: 75 * 60_000,
   /** A run at least this long is a heat, not a burst (minutes). */
   HEAT_MIN: 4,
+  /** An element start open longer than this is a missed stop, not a session still going (ms). */
+  OPEN_MAX_MS: 4 * 60 * 60_000,
 };
 
 export type ApplianceKind = 'dishwasher' | 'washing_machine' | 'tumble_dryer' | 'oven' | 'kettle' | 'microwave';
@@ -46,14 +50,25 @@ export interface Session {
   kinds: ApplianceKind[];
   /** What the session looked like, in words. */
   reason: string;
+  /** No element run is on and none ended within a session gap: no more runs can join it. */
+  finished: boolean;
+}
+
+/** What is on now, to tell a finished session from one still going. */
+export interface LiveState {
+  now: number;
+  open: StepEvent[];
 }
 
 const minutes = (a: Activation) => (a.end - a.start) / 60_000;
 const inRange = (x: number, lo: number, hi: number) => x >= lo && x <= hi;
 const round = (x: number) => Math.round(x);
 
-/** Element runs grouped into sessions per phase set (the caller leaves out what is explained). */
-export function sessionsOf(activations: Activation[], cfg = APPLIANCES): Session[] {
+/**
+ * Element runs grouped into sessions per phase set (the caller leaves out what is explained).
+ * Without `live` every session counts as finished.
+ */
+export function sessionsOf(activations: Activation[], live?: LiveState, cfg = APPLIANCES): Session[] {
   const byPhases = new Map<string, Activation[]>();
   for (const a of activations) {
     if (activationW(a) < cfg.MIN_ELEMENT_W || a.end <= a.start) continue;
@@ -65,7 +80,7 @@ export function sessionsOf(activations: Activation[], cfg = APPLIANCES): Session
     acts.sort((x, y) => x.start - y.start);
     let cur: Activation[] = [];
     const close = () => {
-      if (cur.length) out.push(describe(phases, cur));
+      if (cur.length) out.push(describe(phases, cur, live, cfg));
       cur = [];
     };
     for (const a of acts) {
@@ -77,12 +92,23 @@ export function sessionsOf(activations: Activation[], cfg = APPLIANCES): Session
   return out.sort((x, y) => x.start - y.start);
 }
 
-function describe(phases: string, acts: Activation[]): Session {
+function describe(phases: string, acts: Activation[], live: LiveState | undefined, cfg: typeof APPLIANCES): Session {
   const start = acts[0].start;
   const end = Math.max(...acts.map(a => a.end));
   // Each of these appliances is on one phase; a 3-phase run of their size is a heat pump or a heater.
-  const { kinds, reason } = /^L\d$/.test(phases) ? recognise(acts) : { kinds: [], reason: '' };
-  return { start, end, phases, activations: acts, kWh: acts.reduce((s, a) => s + activationKWh(a), 0), kinds, reason };
+  const { kinds, reason } = /^L\d$/.test(phases) ? recognise(acts, cfg) : { kinds: [], reason: '' };
+  const finished =
+    !live ||
+    (live.now - end > cfg.SESSION_GAP_MS &&
+      !live.open.some(
+        st =>
+          st.t >= start &&
+          st.t - end <= cfg.SESSION_GAP_MS &&
+          live.now - st.t <= cfg.OPEN_MAX_MS &&
+          activationW({ start: st.t, end: st.t, delta: st.delta }) >= cfg.MIN_ELEMENT_W &&
+          phaseLabel(phaseShare(st.delta)) === phases
+      ));
+  return { start, end, phases, activations: acts, kWh: acts.reduce((s, a) => s + activationKWh(a), 0), kinds, reason, finished };
 }
 
 /** The patterns a session's element runs fit. */
@@ -101,6 +127,7 @@ export function recognise(acts: Activation[], cfg = APPLIANCES): { kinds: Applia
     if (inRange(kW(a), 1.6, 3.2) && inRange(m, 1, 5)) kinds.push('kettle');
     if (inRange(kW(a), 0.7, 1.6) && inRange(m, 1, 8)) kinds.push('microwave');
     if (big(a) && inRange(m, 6, 35)) kinds.push('washing_machine');
+    if (inRange(kW(a), 0.8, 3.5) && inRange(m, 6, 25)) kinds.push('oven');
     return { kinds, reason };
   }
 
@@ -115,6 +142,8 @@ export function recognise(acts: Activation[], cfg = APPLIANCES): { kinds: Applia
   }
   if (heats.length === 1 && acts.length <= 2 && big(heats[0]) && inRange(minutes(heats[0]), 6, 35)) {
     kinds.push('washing_machine');
+    // An oven heats up first and then may switch off before it cycles.
+    if (heats[0] === acts[0] && minutes(heats[0]) <= 25) kinds.push('oven');
     reason = `one ${kW(heats[0]).toFixed(1)} kW heat of ${round(minutes(heats[0]))} min`;
   }
   const onMin = acts.reduce((s, a) => s + minutes(a), 0);
@@ -130,7 +159,7 @@ export function recognise(acts: Activation[], cfg = APPLIANCES): { kinds: Applia
     rest.filter(a => minutes(a) <= 10).length >= 0.75 * rest.length &&
     inRange(span, 15, 150)
   ) {
-    kinds.push('oven');
+    if (!kinds.includes('oven')) kinds.push('oven');
     if (!kinds.includes('tumble_dryer')) reason = `a ${round(minutes(acts[0]))} min heat-up, then ${rest.length} short cycles over ${round(span)} min`;
   }
   return { kinds, reason };

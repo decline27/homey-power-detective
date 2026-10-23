@@ -264,8 +264,9 @@ export function analyse(
   const sessions = sessionsOf(
     engine
       .allActivations()
-      .filter(a => a.start >= from && a.start < now && !explained.has(a) && !meteredRun(a) && !inRhythmSlot(a, rhythmic))
-  ).filter(x => x.kinds.length);
+      .filter(a => a.start >= from && a.start < now && !explained.has(a) && !meteredRun(a) && !inRhythmSlot(a, rhythmic)),
+    { now, open: engine.running() }
+  ).filter(x => x.kinds.length && x.finished);
   const sessionOf = new Map<Activation, Session>();
   sessions.forEach(x => x.activations.forEach(a => sessionOf.set(a, x)));
   /** The pattern most of a load's runs fit, when they fit one. */
