@@ -180,6 +180,9 @@ test('after a week and more: heating estimated from outdoor temperature, colder 
     expect(close(sum, day.totalKWh, 1e-9)).toBe(true);
     // The heating estimate is the radiators' energy, and always-on is the true base (410 W).
     expect(close(rowOf(day, 'weather').kWh, sim.truthKWh(day.date, 'radiators'), 0.15)).toBe(true);
-    expect(close(rowOf(day, 'always_on').kWh, (410 * 24) / 1000, 0.15)).toBe(true);
+    // 20 %, not 15: what detection misses (a few floor runs, ~0.5 kWh) lands in the residual the
+    // weather regression splits, and takes from always-on. A phantom 2290 W load from mis-paired
+    // heat pump steps used to absorb it; with those starts dropped it is gone (as it should be).
+    expect(close(rowOf(day, 'always_on').kWh, (410 * 24) / 1000, 0.2)).toBe(true);
   }
 }, 300_000);

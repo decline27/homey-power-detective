@@ -47,6 +47,13 @@ export interface FindingInputs {
   timeZone: string;
   /** When given, a thermostat's rhythm must still show in the day before it (see RHYTHM_RECENT_SHARE). */
   now?: number;
+  /**
+   * The metered device a run of a load is, if any: the one that switched on with it, or the one
+   * the load as a whole was matched to. Shift findings then name the device for its runs,
+   * whatever loads they fell in (a spa heater and a space heater share one load on L2), and a
+   * load's own finding is about the runs no device explains. A heat pump's runs are not shifted.
+   */
+  deviceOf?: (a: Activation, loadId: string) => { id: string; name: string; heatPump: boolean } | null;
 }
 
 export const FINDING_LIMITS = {
@@ -159,28 +166,48 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
   }
 
   if (inp.price) {
-    for (const c of inp.loads) {
-      if (c.rhythmic || inp.heatPumpLoadIds.includes(c.id)) continue;
-      const shift = shiftSaving(typicalRuns(c), inp.price, inp.timeZone);
-      if (!shift || shift.runs < 3) continue;
+    const price = inp.price;
+    // Per day observed, as a load's kWh/day: a load seen on 3 days of 14 does not run daily.
+    const shiftable = (id: string, name: string, runs: Activation[], observedDays: number, confidence: Finding['confidence'], loadId?: string) => {
+      const shift = shiftSaving(runs, price, inp.timeZone);
+      if (!shift || shift.runs < 3) return;
       const kWhRun = shift.kWh / shift.runs;
-      if (kWhRun < limits.SHIFT_MIN_RUN_KWH || shift.actual <= 0 || shift.saving / shift.actual < limits.SHIFT_MIN_SHARE) continue;
-      // Per day observed, as the load's kWh/day: a load seen on 3 days of 14 does not run daily.
-      const observedDays = c.count / c.startsPerDay;
+      if (kWhRun < limits.SHIFT_MIN_RUN_KWH || shift.actual <= 0 || shift.saving / shift.actual < limits.SHIFT_MIN_SHARE) return;
       const perMonth = (shift.saving / observedDays) * 30;
       out.push({
-        id: `shiftable:${c.id}`,
+        id,
         kind: 'shiftable',
-        loadId: c.id,
-        title: `${inp.names[c.id] ?? `A ${round(c.medianW, -1)} W load on ${c.phases}`}: ${money(perMonth, inp.currency)}/month cheaper at the day's cheapest hours`,
+        loadId,
+        title: `${name}: ${money(perMonth, inp.currency)}/month cheaper at the day's cheapest hours`,
         detail:
           `${shift.runs} runs of about ${round(kWhRun, 1)} kWh cost ${money(shift.actual, inp.currency)}; started in the cheapest hours of ` +
           `the same days they would have cost ${money(shift.actual - shift.saving, inp.currency)}.`,
         kWhPerMonth: (shift.kWh / observedDays) * 30,
         costPerMonth: (shift.actual / observedDays) * 30,
         savingPerMonth: perMonth,
-        confidence: inp.names[c.id] ? 'high' : 'medium',
+        confidence,
       });
+    };
+    const devices = new Map<string, { name: string; runs: Activation[]; observedDays: number }>();
+    for (const c of inp.loads) {
+      // A thermostat's runs come when the heat is needed, metered or not.
+      if (c.rhythmic || inp.heatPumpLoadIds.includes(c.id)) continue;
+      const observedDays = c.count / c.startsPerDay;
+      const own: Activation[] = [];
+      for (const a of typicalRuns(c)) {
+        const d = inp.deviceOf?.(a, c.id) ?? null;
+        if (!d) own.push(a);
+        else if (!d.heatPump) {
+          const entry = devices.get(d.id) ?? { name: d.name, runs: [], observedDays };
+          entry.runs.push(a);
+          devices.set(d.id, entry);
+        }
+      }
+      const name = inp.names[c.id] ?? `A ${round(c.medianW, -1)} W load on ${c.phases}`;
+      shiftable(`shiftable:${c.id}`, name, own, observedDays, inp.names[c.id] ? 'high' : 'medium', c.id);
+    }
+    for (const [id, d] of devices) {
+      shiftable(`shiftable:device:${id}`, d.name, d.runs.sort((x, y) => x.start - y.start), d.observedDays, 'high');
     }
   }
 

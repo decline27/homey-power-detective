@@ -7,7 +7,7 @@ import { PowerEngine } from '../engine/engine';
 import { LabelMatch, Reference, matchReferences, silentStretches } from '../engine/labels';
 import { Score } from '../engine/score';
 import { CLUSTERING } from '../engine/config';
-import { Activation, LoadCluster, Vec3, activationW } from '../engine/types';
+import { Activation, LoadCluster, StepEvent, Vec3, activationW } from '../engine/types';
 import { Experiment, ExperimentResult, evaluateExperiment } from '../insight/experiments';
 import { Finding, buildFindings } from '../insight/findings';
 import { DayRecord } from '../engine/day-meter';
@@ -34,6 +34,14 @@ export const ANALYSIS = {
   KEEP_MIN_MATCHES: 3,
   /** An unnamed load whose runs are at least this share one appliance's pattern is suggested as it. */
   APPLIANCE_RUN_SHARE: 0.6,
+  /**
+   * A metered device reported off this long has stopped, with every open start that is its
+   * (ms): six MELCloud polls. On the Homey's heat pump, the false long runs had a longer off
+   * stretch inside them, 43 of 50; real runs rarely did.
+   */
+  DEVICE_OFF_MS: 30 * 60_000,
+  /** A start this soon after a device's last "on" (one reading late) still came while it was on (ms). */
+  DEVICE_ON_SLACK_MS: 60_000,
 };
 
 export interface UserSettings {
@@ -167,6 +175,34 @@ export function nameFromDevices(loads: LoadCluster[], refs: Reference[], keep: R
   return [...found, ...kept];
 }
 
+/** The learned phase shares of the metered devices the house meter has seen enough of. */
+export function meteredShares(metered: MeteredDevices | undefined): Map<string, Vec3> {
+  return new Map((metered?.status() ?? []).filter(m => m.share && m.matches >= METERED.MIN_MATCHES).map(m => [m.id, m.share as Vec3]));
+}
+
+/**
+ * Open starts that only a metered device now off could be: one that was on when the start came,
+ * on the same phases, and every such device has reported off for DEVICE_OFF_MS since. A
+ * modulating heat pump steps up while running and ramps down without a step, so the house meter
+ * never shows those stops; MELCloud saying it is off is the stop. Starts no device was on for
+ * (an unmetered load) are left to the house meter.
+ */
+export function startsOfStoppedDevices(open: StepEvent[], refs: Reference[], shares: Map<string, Vec3>, now: number): StepEvent[] {
+  const devices = refs.filter(r => shares.has(r.id) && r.intervals.length);
+  const lastOn = new Map(devices.map(r => [r.id, Math.max(...r.intervals.map(i => i.end))]));
+  return open.filter(o => {
+    const w = o.delta[0] + o.delta[1] + o.delta[2];
+    if (w <= 0) return false;
+    const own = o.delta.map(x => Math.max(0, x) / w);
+    const owners = devices.filter(
+      r =>
+        own.reduce((s, x, k) => s + Math.abs(x - (shares.get(r.id) as Vec3)[k]), 0) <= CLUSTERING.MAX_SHARE_DISTANCE &&
+        r.intervals.some(i => o.t >= i.start - ANALYSIS.REFERENCE_TOL_MS && o.t <= i.end + ANALYSIS.DEVICE_ON_SLACK_MS)
+    );
+    return owners.length > 0 && owners.every(r => now - (lastOn.get(r.id) as number) >= ANALYSIS.DEVICE_OFF_MS);
+  });
+}
+
 /**
  * The metered device a run is, when one switched on with it on the same phases. Its own meter
  * already counts that energy. Runs, not loads: one load can be two devices of a size on one phase
@@ -234,9 +270,7 @@ export function analyse(
   );
 
   // Runs that a metered device is (its phases learned from the house meter, so the check is real).
-  const shares = new Map(
-    (sources.metered?.status() ?? []).filter(m => m.share && m.matches >= METERED.MIN_MATCHES).map(m => [m.id, m.share as Vec3])
-  );
+  const shares = meteredShares(sources.metered);
   const meteredRun = meteredRunOf(refs, shares);
   const runDevices = new Map(clusters.map(c => [c.id, c.activations.map(meteredRun)]));
   const refName = new Map(refs.map(r => [r.id, r.name]));
@@ -386,6 +420,7 @@ export function analyse(
   const fullAccounts = accounts.filter(d => d.coveredHours >= 20);
   const baseloadW = fullAccounts.length ? fullAccounts[fullAccounts.length - 1].alwaysOnW : accounts[accounts.length - 1]?.alwaysOnW ?? null;
 
+  const loadDevice = new Map(loads.filter(l => l.deviceId).map(l => [l.id, l.deviceId as string]));
   const findings = buildFindings({
     loads: clusters,
     names,
@@ -398,6 +433,10 @@ export function analyse(
     heatPumpCop: s.cop,
     timeZone: s.timeZone,
     now,
+    deviceOf: (a, loadId) => {
+      const id = meteredRun(a) ?? loadDevice.get(loadId) ?? null;
+      return id ? { id, name: refName.get(id) ?? id, heatPump: heatPumpDeviceIds.includes(id) } : null;
+    },
   });
 
   const observedHours = engine.observedFrom() === null ? 0 : (now - (engine.observedFrom() as number)) / 3_600_000;

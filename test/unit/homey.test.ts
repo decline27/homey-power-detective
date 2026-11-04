@@ -1,4 +1,4 @@
-import { analyse, displayName, meteredRunOf, nameFromDevices } from '../../src/homey/analysis';
+import { analyse, displayName, meteredRunOf, nameFromDevices, startsOfStoppedDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
 import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
@@ -256,6 +256,22 @@ describe('analysis', () => {
     expect(runOf(run(T0 + MIN, v(240, 180, 180)))).toBe('hp');
     expect(runOf(run(T0 + 2 * MIN, v(0, 2600, 0)))).toBe('spa');
     expect(runOf(run(T0 + 30 * MIN, v(0, 2600, 0)))).toBeNull(); // on L2, but not when the spa switched on
+  });
+
+  test('an open start whose metered devices all said off since is stopped; others are left', () => {
+    const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
+    const shares = new Map([['hp', v(0.34, 0.33, 0.33)], ['ev', v(0.33, 0.33, 0.34)]]);
+    const step = (t: number, delta: [number, number, number]) => ({ t, settledAt: t, delta });
+    const boost = step(T0 + 20 * MIN, v(300, 280, 290)); // the heat pump stepping up while on
+    const floor = step(T0 + 20 * MIN, v(1350, 0, 0)); // not its phases
+    const late = step(T0 + 90 * MIN, v(300, 280, 290)); // nothing metered was on
+    const refs = [{ id: 'hp', name: 'Heatpump', intervals: [{ start: T0, end: T0 + 60 * MIN }] }];
+    const open = [boost, floor, late];
+    expect(startsOfStoppedDevices(open, refs, shares, T0 + 80 * MIN)).toEqual([]); // off 20 min: not yet
+    expect(startsOfStoppedDevices(open, refs, shares, T0 + 95 * MIN)).toEqual([boost]);
+    // The EV charger, same phases, was on too and still is: the start may be its.
+    const both = [...refs, { id: 'ev', name: 'Easee', intervals: [{ start: T0, end: T0 + 95 * MIN }] }];
+    expect(startsOfStoppedDevices(open, both, shares, T0 + 95 * MIN)).toEqual([]);
   });
 
   test('programme mode: a plug-metered appliance whose heater is a part of the run', () => {

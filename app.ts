@@ -14,7 +14,7 @@ import { classify } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
 import { Activation, StepEvent, activationKWh, activationW } from './src/engine/types';
 import { DayMeter, DayRecord } from './src/engine/day-meter';
-import { Analysis, UserSettings, analyse, displayName, runningNow } from './src/homey/analysis';
+import { Analysis, UserSettings, analyse, displayName, meteredShares, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
 import { MeteredDevices } from './src/homey/metered';
 import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
@@ -249,6 +249,8 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     if (this.meterId) own.add(this.meterId);
     this.refs.update(now, devices, own);
     this.trackMetered(devices, own, now);
+    // Starts of a device that has since said it is off: not paired with a stop hours later.
+    this.engine.dropStarts(startsOfStoppedDevices(this.engine.running(), this.refs.references(), meteredShares(this.metered), now));
     const outdoor =
       devices.find(d => d.class === 'heatpump' && typeof d.capabilitiesObj?.[OUTDOOR]?.value === 'number') ??
       devices.find(d => typeof d.capabilitiesObj?.[OUTDOOR]?.value === 'number');

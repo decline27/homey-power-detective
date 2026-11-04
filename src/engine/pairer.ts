@@ -98,6 +98,12 @@ export class Pairer {
     return ended;
   }
 
+  /** Drops open starts known to have stopped (their metered device says so). */
+  drop(starts: StepEvent[]): void {
+    const gone = new Set(starts);
+    this.open = this.open.filter(o => !gone.has(o));
+  }
+
   /** Starts still waiting for their stop (loads running now). */
   running(): StepEvent[] {
     return [...this.open];

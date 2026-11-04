@@ -246,6 +246,24 @@ describe('ledger and findings', () => {
     expect(shiftSaving(dish, () => null, 'UTC')).toBeNull();
   });
 
+  test('shiftable: two metered devices in one load each get their own finding, by name', () => {
+    const spa = [0, 1, 2].map(d => act(T0 + d * 24 * H + 18 * H, 60, [0, 2600, 0]));
+    const heater = [0, 1, 2].map(d => act(T0 + d * 24 * H + 19 * H + 30 * MIN, 60, [0, 2100, 0]));
+    const loads = clusterActivations([...spa, ...heater], { from: T0, to: T0 + 3 * 24 * H });
+    expect(loads).toHaveLength(1); // one load on L2, as on the Homey
+    const f = buildFindings({
+      loads, names: {}, heatPumpLoadIds: [], baseloadW: null, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, price, timeZone: 'UTC',
+      deviceOf: a => (a.delta[1] > 2400 ? { id: 'spa', name: 'BWA Spa', heatPump: false } : { id: 'heater', name: 'Space heater', heatPump: false }),
+    });
+    expect(f.map(x => x.id).sort()).toEqual(['shiftable:device:heater', 'shiftable:device:spa']);
+    expect(f.find(x => x.id === 'shiftable:device:spa')!.title).toMatch(/^BWA Spa: /);
+    // A heat pump's runs are not shifted.
+    expect(buildFindings({
+      loads, names: {}, heatPumpLoadIds: [], baseloadW: null, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, price, timeZone: 'UTC',
+      deviceOf: () => ({ id: 'hp', name: 'Heatpump', heatPump: true }),
+    })).toEqual([]);
+  });
+
   test('shiftable: per day observed, and a missed stop is not a run of hours', () => {
     const findingsOf = (acts: Activation[], days: number) =>
       buildFindings({

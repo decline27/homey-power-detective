@@ -95,6 +95,11 @@ export class PowerEngine {
     return this.pairer.running();
   }
 
+  /** Forgets open starts that stopped without a step (see Pairer.drop); `running()` gives them. */
+  dropStarts(starts: StepEvent[]): void {
+    this.pairer.drop(starts);
+  }
+
   allActivations(): Activation[] {
     return [...this.activations];
   }
