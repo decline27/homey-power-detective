@@ -64,6 +64,7 @@ export class PowerEngine {
         if (a) activations.push(a);
       }
     }
+    activations.push(...this.pairer.level(r.t, r.w));
     if (activations.length) {
       this.activations.push(...activations);
       this.prune(r.t);

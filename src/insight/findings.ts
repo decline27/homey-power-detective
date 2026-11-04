@@ -146,11 +146,13 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
   if (inp.price) {
     for (const c of inp.loads) {
       if (c.rhythmic || inp.heatPumpLoadIds.includes(c.id)) continue;
-      const shift = shiftSaving(c.activations, inp.price, inp.timeZone);
+      const shift = shiftSaving(typicalRuns(c), inp.price, inp.timeZone);
       if (!shift || shift.runs < 3) continue;
       const kWhRun = shift.kWh / shift.runs;
       if (kWhRun < limits.SHIFT_MIN_RUN_KWH || shift.actual <= 0 || shift.saving / shift.actual < limits.SHIFT_MIN_SHARE) continue;
-      const perMonth = (shift.saving / shift.days) * 30;
+      // Per day observed, as the load's kWh/day: a load seen on 3 days of 14 does not run daily.
+      const observedDays = c.count / c.startsPerDay;
+      const perMonth = (shift.saving / observedDays) * 30;
       out.push({
         id: `shiftable:${c.id}`,
         kind: 'shiftable',
@@ -159,8 +161,8 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
         detail:
           `${shift.runs} runs of about ${round(kWhRun, 1)} kWh cost ${money(shift.actual, inp.currency)}; started in the cheapest hours of ` +
           `the same days they would have cost ${money(shift.actual - shift.saving, inp.currency)}.`,
-        kWhPerMonth: (shift.kWh / shift.days) * 30,
-        costPerMonth: (shift.actual / shift.days) * 30,
+        kWhPerMonth: (shift.kWh / observedDays) * 30,
+        costPerMonth: (shift.actual / observedDays) * 30,
         savingPerMonth: perMonth,
         confidence: inp.names[c.id] ? 'high' : 'medium',
       });
@@ -172,17 +174,24 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
   return out.sort((a, b) => weight(b) - weight(a));
 }
 
+/**
+ * A load's runs with each missed stop (a run far longer than the load runs) cut to the load's
+ * typical length, as its kWh/day and the ledger count it: one start paired with a stop hours
+ * later is not a 37 kWh run.
+ */
+const typicalRuns = (c: LoadCluster): Activation[] =>
+  c.activations.map(a => (a.end - a.start > c.maxMinutes * 60_000 ? { ...a, end: a.start + c.medianMinutes * 60_000 } : a));
+
 /** What the activations cost, and what they would have cost started at the cheapest hour of the same day. */
 export function shiftSaving(
   acts: Activation[],
   price: PriceAt,
   timeZone: string
-): { runs: number; kWh: number; actual: number; saving: number; days: number } | null {
+): { runs: number; kWh: number; actual: number; saving: number } | null {
   let actual = 0;
   let best = 0;
   let kWh = 0;
   let runs = 0;
-  const days = new Set<string>();
   for (const a of acts) {
     const date = localDate(a.start, timeZone);
     const bounds = dayBounds(date, timeZone);
@@ -198,9 +207,8 @@ export function shiftSaving(
     best += cheapest;
     kWh += activationKWh(a);
     runs++;
-    days.add(date);
   }
   if (runs === 0) return null;
-  return { runs, kWh, actual, saving: actual - best, days: Math.max(days.size, 1) };
+  return { runs, kWh, actual, saving: actual - best };
 }
 

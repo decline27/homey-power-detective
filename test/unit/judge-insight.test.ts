@@ -229,7 +229,7 @@ describe('ledger and findings', () => {
 
   test('shiftable: a big load run at expensive hours', () => {
     const dish = [0, 1, 2, 3].map(d => act(T0 + d * 24 * H + 18 * H, 60, [0, 0, 2000]));
-    const ls = clusterActivations(dish);
+    const ls = clusterActivations(dish, { from: T0, to: T0 + 4 * 24 * H });
     const s = shiftSaving(dish, price, 'UTC')!;
     expect(s.runs).toBe(4);
     expect(s.saving).toBeCloseTo(4 * 2 * (2 - 0.5));
@@ -237,6 +237,28 @@ describe('ledger and findings', () => {
     expect(f[0].kind).toBe('shiftable');
     expect(f[0].savingPerMonth).toBeCloseTo((12 / 4) * 30);
     expect(shiftSaving(dish, () => null, 'UTC')).toBeNull();
+  });
+
+  test('shiftable: per day observed, and a missed stop is not a run of hours', () => {
+    const findingsOf = (acts: Activation[], days: number) =>
+      buildFindings({
+        loads: clusterActivations(acts, { from: T0, to: T0 + days * 24 * H }),
+        names: {},
+        heatPumpLoadIds: [],
+        baseloadW: null,
+        avgPrice: 2,
+        currency: 'SEK',
+        heatPumpCop: 3,
+        price,
+        timeZone: 'UTC',
+      }).filter(x => x.kind === 'shiftable');
+    const dish = [0, 1, 2, 3].map(d => act(T0 + d * 24 * H + 18 * H, 60, [0, 0, 2000]));
+    // The same four runs over 16 days: a quarter of the saving a month.
+    expect(findingsOf(dish, 16)[0].savingPerMonth).toBeCloseTo((12 / 16) * 30);
+    // A kettle whose start was paired with a stop 9 hours later (the Pulse case, a 1 min load
+    // shown as 37 kWh runs) is still a kettle: too small a run to be worth moving.
+    const kettle = [0, 1, 2, 3, 4, 5, 6, 7].map(d => act(T0 + d * 24 * H + 18 * H, d === 3 ? 540 : 1, [0, 0, 2000]));
+    expect(findingsOf(kettle, 8)).toEqual([]);
   });
 });
 

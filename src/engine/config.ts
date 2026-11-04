@@ -41,6 +41,16 @@ export const PAIRING = {
   MAX_OPEN: 64,
   /** Starts scoring at least this share of the best match count as equally good; the latest wins. */
   NEAR_BEST: 0.9,
+  /**
+   * An open start whose phase carries less than MIN_RATIO of it for this long stopped unseen
+   * (ms): longer than a stop takes to be reported (DETECTOR.COMBINE_MAX_WAIT_MS plus a slow
+   * transition), so a stop that comes is never too late.
+   */
+  LEVEL_WAIT_MS: 6 * 60_000,
+  /** Phases of a start carrying less than this (W) are not checked: noise. */
+  LEVEL_MIN_PHASE_W: 80,
+  /** Readings further apart than this leave the level in between unknown (ms). */
+  LEVEL_MAX_GAP_MS: 90_000,
 };
 
 export const CLUSTERING = {

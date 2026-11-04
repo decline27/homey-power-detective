@@ -152,6 +152,51 @@ describe('Pairer', () => {
     expect(q.push(step(T0 + MIN, [-500, -500, -500]))).not.toBeNull();
   });
 
+  test('a start whose phase draws less than the load stopped unseen: it ends then, not hours later', () => {
+    const p = new Pairer();
+    const levels = (from: number, to: number, w: Vec3) => {
+      const ended = [];
+      for (let t = from; t <= to; t += 10_000) ended.push(...p.level(t, w));
+      return ended;
+    };
+    p.push(step(T0, [1350, 0, 0])); // floor heating on
+    levels(T0, T0 + 20 * MIN, [1500, 300, 300]);
+    // Off at 20 min 10 s, but its stop was lost. A stop may still be on its way for a while.
+    expect(levels(T0 + 20 * MIN + 10_000, T0 + 25 * MIN, [150, 300, 300])).toEqual([]);
+    expect(p.running()).toHaveLength(1);
+    expect(levels(T0 + 25 * MIN + 10_000, T0 + 30 * MIN, [150, 300, 300])).toEqual([
+      { start: T0, end: T0 + 20 * MIN + 10_000, delta: [1350, 0, 0] },
+    ]);
+    expect(p.running()).toHaveLength(0);
+    expect(p.push(step(T0 + 9 * 60 * MIN, [-1350, 0, 0]))).toBeNull();
+  });
+
+  test('the level check keeps loads that are on: two of a size, an inverter drifting down, a reading gap', () => {
+    const p = new Pairer();
+    p.push(step(T0, [0, 2000, 0]));
+    p.push(step(T0 + MIN, [0, 2000, 0]));
+    p.push(step(T0 + MIN, [900, 900, 900])); // heat pump, modulating down to 450 W per phase
+    for (let t = T0 + MIN; t <= T0 + 60 * MIN; t += 10_000) p.level(t, [450, 4100, 450]);
+    expect(p.running()).toHaveLength(3);
+    // Below for 5 minutes, then a 10-minute gap, then below again: the clock restarts at the gap.
+    const q = new Pairer();
+    q.push(step(T0, [1300, 0, 0]));
+    for (let t = T0; t <= T0 + 5 * MIN; t += 10_000) q.level(t, [100, 0, 0]);
+    q.level(T0 + 15 * MIN, [100, 0, 0]);
+    expect(q.running()).toHaveLength(1);
+    // And a stop reported while the level is already down still pairs.
+    expect(q.push(step(T0 + 4 * MIN, [-1300, 0, 0]))).not.toBeNull();
+  });
+
+  test('a start restored after a restart, already off: dropped, not ended at the restart', () => {
+    const p = new Pairer();
+    p.restore([step(T0, [1300, 0, 0])]);
+    const ended = [];
+    for (let t = T0 + 10 * 60 * MIN; t <= T0 + 10 * 60 * MIN + 10 * MIN; t += 10_000) ended.push(...p.level(t, [100, 0, 0]));
+    expect(ended).toEqual([]);
+    expect(p.running()).toHaveLength(0);
+  });
+
   test('match score', () => {
     expect(cosine([1, 0, 0], [0, 1, 0])).toBe(0);
     expect(cosine([0, 0, 0], [1, 0, 0])).toBe(0);

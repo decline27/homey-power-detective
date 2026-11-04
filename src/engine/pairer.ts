@@ -32,6 +32,11 @@ export function matchScore(on: Vec3, off: Vec3, cfg: PairingConfig = PAIRING): n
 
 export class Pairer {
   private open: StepEvent[] = [];
+  /** Since when the house has drawn too little for an open start's load to still be on, and whether that fall was seen. */
+  private below = new WeakMap<StepEvent, { since: number; seen: boolean }>();
+  /** Open starts whose load the latest reading could still carry. */
+  private on = new WeakSet<StepEvent>();
+  private levelAt: number | null = null;
 
   constructor(private readonly cfg: PairingConfig = PAIRING) {}
 
@@ -60,6 +65,37 @@ export class Pairer {
       ? on.delta.map((v, k) => (v - step.delta[k]) / 2)
       : [...on.delta]) as Vec3;
     return { start: on.t, end: step.t, delta };
+  }
+
+  /**
+   * What the house draws now, per phase (W). A load cannot draw more than the house does: once a
+   * phase of an open start carries less than its smallest pairable stop (MIN_RATIO of the start),
+   * the load stopped without a step (an inverter ramping down, a stop lost in another load's
+   * change), and any stop paired with it later would be another load's, hours on. Once the fall
+   * is LEVEL_WAIT_MS old (longer than a real stop takes to be reported, so a stop that comes still
+   * pairs) the start ends where the level fell; if that moment was not seen (a gap in the
+   * readings, a start restored after a restart), it is dropped. Returns the activations it ended.
+   */
+  level(t: number, w: Vec3): Activation[] {
+    const gap = this.levelAt === null || t - this.levelAt > this.cfg.LEVEL_MAX_GAP_MS;
+    this.levelAt = t;
+    const ended: Activation[] = [];
+    this.open = this.open.filter(o => {
+      const gone = o.delta.some((d, k) => d >= this.cfg.LEVEL_MIN_PHASE_W && w[k] < this.cfg.MIN_RATIO * d);
+      if (!gone) {
+        this.below.delete(o);
+        this.on.add(o);
+        return true;
+      }
+      // After a gap, when it fell is not known: the wait counts from now.
+      if (gap || !this.below.has(o)) this.below.set(o, { since: t, seen: !gap && this.on.has(o) });
+      this.on.delete(o);
+      const fall = this.below.get(o) as { since: number; seen: boolean };
+      if (t - fall.since < this.cfg.LEVEL_WAIT_MS) return true;
+      if (fall.seen) ended.push({ start: o.t, end: Math.max(o.t, fall.since), delta: [...o.delta] as Vec3 });
+      return false;
+    });
+    return ended;
   }
 
   /** Starts still waiting for their stop (loads running now). */
