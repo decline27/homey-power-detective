@@ -45,6 +45,8 @@ export interface FindingInputs {
   /** Coefficient of performance assumed for heat moved to the heat pump. */
   heatPumpCop: number;
   timeZone: string;
+  /** When given, a thermostat's rhythm must still show in the day before it (see RHYTHM_RECENT_SHARE). */
+  now?: number;
 }
 
 export const FINDING_LIMITS = {
@@ -52,6 +54,11 @@ export const FINDING_LIMITS = {
   MIN_HEATER_KWH_DAY: 1,
   HEATER_MIN_W: 400,
   HEATER_MAX_W: 4000,
+  /**
+   * A rhythmic load must have made at least this share of its expected starts in the last day: a
+   * heater that got its own meter, or a new thermostat, no longer runs as the window's history says.
+   */
+  RHYTHM_RECENT_SHARE: 0.5,
   /** Short cycling: runs this short or shorter (minutes)... */
   SHORT_RUN_MIN: 10,
   /** ...this often (starts/day). */
@@ -72,6 +79,13 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
   const monthly = (kWhPerDay: number) => kWhPerDay * 30;
   const cost = (kWh: number) => (inp.avgPrice === null ? null : kWh * inp.avgPrice);
 
+  /** Still on its rhythm: enough starts in the last day for its period. */
+  const stillRhythmic = (c: LoadCluster) => {
+    if (inp.now === undefined || !c.periodMinutes) return true;
+    const recent = c.activations.filter(a => a.start >= (inp.now as number) - 86_400_000).length;
+    return recent >= limits.RHYTHM_RECENT_SHARE * (1440 / c.periodMinutes);
+  };
+
   for (const c of inp.loads) {
     const name = inp.names[c.id];
     const isHeatPump = inp.heatPumpLoadIds.includes(c.id);
@@ -79,6 +93,7 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
     if (
       !isHeatPump &&
       c.rhythmic &&
+      stillRhythmic(c) &&
       c.phases !== '3-phase' &&
       c.medianW >= limits.HEATER_MIN_W &&
       c.medianW <= limits.HEATER_MAX_W &&

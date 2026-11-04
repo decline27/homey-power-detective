@@ -200,6 +200,13 @@ describe('ledger and findings', () => {
     expect(f[2].title).toContain('likely the heat pump');
   });
 
+  test('a thermostat that no longer runs on its rhythm (it got its own meter) is not a finding', () => {
+    const input = { loads, names: {}, heatPumpLoadIds: [], baseloadW: null, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, timeZone: 'UTC' };
+    const last = Math.max(...loads.flatMap(l => l.activations.map(a => a.end)));
+    expect(buildFindings({ ...input, now: last }).some(x => x.kind === 'rhythmic-heater')).toBe(true);
+    expect(buildFindings({ ...input, now: last + 20 * H }).some(x => x.kind === 'rhythmic-heater')).toBe(false);
+  });
+
   test('a base load from a partial day is not "never", and not high confidence', () => {
     const input = { loads: [], names: {}, heatPumpLoadIds: [], baseloadW: 640, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, timeZone: 'UTC' };
     const partial = buildFindings({ ...input, baseloadFullDay: false }).find(x => x.kind === 'base-load')!;

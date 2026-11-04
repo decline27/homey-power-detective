@@ -397,6 +397,7 @@ export function analyse(
     price: prices.priceAt(s.flatPrice),
     heatPumpCop: s.cop,
     timeZone: s.timeZone,
+    now,
   });
 
   const observedHours = engine.observedFrom() === null ? 0 : (now - (engine.observedFrom() as number)) / 3_600_000;
