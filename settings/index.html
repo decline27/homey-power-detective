@@ -7,46 +7,52 @@
   <style>
     :root {
       --bg: #f6f8f7; --card: #ffffff; --ink: #14201c; --muted: #5d6b66; --line: #e2e8e5;
-      --accent: #0e7c66; --warn: #b5530b; --ok: #1f7a3a; --bad: #b42318;
+      --accent: #0e7c66; --warn: #b5530b; --ok: #1f7a3a; --bad: #b42318; --soft: #eef4f1;
       --s1: #0e7c66; --s2: #3b82c4; --s3: #c2410c; --s4: #7c3aed; --s5: #ca8a04; --s6: #0891b2; --other: #64748b; --base: #94a3a0; --rest: #d6dcda; --weather: #f59e0b;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #0f1513; --card: #18201d; --ink: #e8efec; --muted: #9aa8a3; --line: #2a3531; --rest: #3a4541; --base: #6b7a76; }
+      :root { --bg: #0f1513; --card: #18201d; --ink: #e8efec; --muted: #9aa8a3; --line: #2a3531; --rest: #3a4541; --base: #6b7a76; --soft: #1d2925; }
     }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 12px; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    h2 { font-size: 15px; margin: 18px 0 8px; }
+    body { margin: 0; padding: 12px; background: var(--bg); color: var(--ink); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    h2 { font-size: 17px; margin: 22px 0 8px; }
     .muted { color: var(--muted); }
+    .small { font-size: 13px; }
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
-    .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-    .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
-    .kpi b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
-    .kpi span { color: var(--muted); font-size: 12px; }
-    .load { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
-    .load:first-child { border-top: 0; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; }
-    .name { font-weight: 600; }
-    .chip { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 11px; border: 1px solid var(--line); color: var(--muted); margin-right: 4px; }
+    .hero b { font-size: 28px; font-variant-numeric: tabular-nums; }
+    .hero .unit { color: var(--muted); margin-right: 14px; }
+    .say { background: var(--soft); border-color: transparent; }
+    .tip .title { font-weight: 600; }
+    .money { color: var(--accent); font-weight: 600; white-space: nowrap; }
+    .chip { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
     .chip.on { border-color: var(--accent); color: var(--accent); }
-    .right { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .finding .title { font-weight: 600; }
-    .money { color: var(--accent); font-weight: 600; }
-    button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+    .where { display: grid; grid-template-columns: 12px 1fr auto; gap: 4px 8px; align-items: center; margin-top: 10px; }
+    .where i { width: 10px; height: 10px; border-radius: 3px; }
+    .where .n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .load { padding: 10px 0; border-top: 1px solid var(--line); }
+    .load:first-child { border-top: 0; padding-top: 0; }
+    .name { font-weight: 600; }
+    button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
     button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button.link { border: 0; background: none; color: var(--accent); padding: 4px 0; }
     input, select { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); }
-    label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
-    .row { display: flex; gap: 6px; margin-top: 6px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 2px; }
+    .row { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+    .row.wrap { flex-wrap: wrap; }
     .status-confirmed { color: var(--ok); } .status-rejected { color: var(--bad); } .status-running { color: var(--warn); }
     table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-    td, th { text-align: left; padding: 4px 2px; border-top: 1px solid var(--line); font-size: 13px; }
+    td, th { text-align: left; padding: 5px 2px; border-top: 1px solid var(--line); font-size: 13px; vertical-align: top; }
     th { color: var(--muted); font-weight: 500; }
-    .legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 6px; }
-    .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+    details { margin-top: 10px; }
+    details > summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0; list-style-position: inside; }
+    details.section > summary { font-size: 16px; color: var(--ink); }
+    h3 { font-size: 14px; margin: 14px 0 6px; }
     .hidden { display: none; }
   </style>
 </head>
 <body>
-  <div id="status" class="muted">Loading…</div>
+  <div id="status" class="muted small">Loading…</div>
+
   <!-- Outside the lists the minute refresh rebuilds, so it stays while it is filled in. -->
   <div class="card hidden" id="testform" style="margin-top:8px">
     <div class="name" id="tf-title"></div>
@@ -54,83 +60,112 @@
     <input id="tf-label" placeholder="e.g. Bathroom floor heating" />
     <div class="row"><button class="primary" id="tf-start">Start test</button><button id="tf-cancel">Cancel</button></div>
   </div>
-  <div class="kpis" style="margin-top:8px">
-    <div class="kpi"><b id="k-explained">–</b><span>of energy accounted for (7 days)</span></div>
-    <div class="kpi"><b id="k-kwh">–</b><span>kWh per day</span></div>
-    <div class="kpi"><b id="k-base">–</b><span>always-on base load</span></div>
-    <div class="kpi"><b id="k-top">–</b><span>top finding, per month</span></div>
+  <div id="running"></div>
+
+  <div class="card hero" style="margin-top:8px">
+    <div class="row" style="margin-top:0;gap:24px;flex-wrap:wrap">
+      <div><b id="k-kwh">–</b><div class="unit small">kWh a day</div></div>
+      <div><b id="k-cost">–</b><div class="unit small">a month, at your prices</div></div>
+    </div>
+    <div class="muted small">Average of the last 7 days, from your house meter.</div>
   </div>
+  <div class="card say" id="summary">No summary yet.</div>
 
-  <h2>Where the energy went</h2>
-  <div class="card"><div id="chart"></div><div id="legend" class="legend"></div>
-    <div class="muted" style="font-size:12px;margin-top:6px">Devices with their own meter are exact; found loads, always-on and heating are estimated. Every day adds up to the house meter.</div></div>
+  <h2>What you can do</h2>
+  <div id="tips"></div>
 
-  <h2>Devices that meter themselves</h2>
-  <div class="card" id="metered"><span class="muted">None yet: an EV charger, heat pump, spa or smart plug appears here once Homey reports its power.</span></div>
+  <h2>Where your energy goes</h2>
+  <div class="card"><div id="chart"></div><div id="where" class="where"></div>
+    <div class="muted small" style="margin-top:8px">“Measured” devices report their own use. The rest is worked out from the house meter.</div></div>
 
-  <h2>Findings</h2>
-  <div id="findings"></div>
-
-  <h2>Loads found</h2>
+  <h2>Help name what was found</h2>
   <div class="card" id="loads"></div>
+  <details id="all-wrap"><summary id="all-title">All loads found</summary><div class="card" id="allloads"></div></details>
 
-  <h2>Appliances recognised by their pattern</h2>
-  <div class="card" id="appliances"><span class="muted">None yet. A dishwasher, washing machine, tumble dryer, oven or kettle appears here once a run looks like one.</span></div>
+  <details class="section" id="details"><summary>Details</summary>
+    <h3>Devices that measure themselves</h3>
+    <div class="card" id="metered"><span class="muted">None yet: an EV charger, heat pump, spa or smart plug appears here once Homey reports its power.</span></div>
+    <h3>How well it recognises them from the house meter</h3>
+    <div class="card" id="validation"></div>
+    <h3>Appliances guessed from their pattern</h3>
+    <div class="card" id="appliances"><span class="muted">None yet. A dishwasher, washing machine, tumble dryer, oven or kettle appears here once a run looks like one.</span></div>
+    <h3>Switch-off tests</h3>
+    <div class="card" id="tests"><span class="muted">None yet. Switch something off and press “Test” on the load you think it is.</span></div>
+  </details>
 
-  <h2>Switch-off tests</h2>
-  <div class="card" id="tests"><span class="muted">None yet. Switch something off and press "Test" on the load you think it is.</span></div>
-
-  <h2>How well it recognises your metered devices</h2>
-  <div class="card" id="validation"></div>
-
-  <h2>Weekly summary</h2>
-  <div class="card"><div id="summary" class="muted">No summary yet.</div><div class="row"><button id="b-summary">Write it now</button></div></div>
-
-  <h2>Settings</h2>
-  <div class="card">
-    <label for="meter">House meter</label>
-    <select id="meter"><option value="">Automatic</option></select>
-    <label for="currency">Currency</label>
-    <input id="currency" placeholder="SEK" />
-    <label for="flat">Price per kWh when Homey reports none</label>
-    <input id="flat" type="number" step="0.01" placeholder="e.g. 2.0" />
-    <label for="cop">Heat pump efficiency (COP) for heat moved to it</label>
-    <input id="cop" type="number" step="0.1" min="1" max="6" placeholder="3" />
-    <label for="lang">Summary language</label>
-    <select id="lang"><option value="en">English</option><option value="sv">Svenska</option></select>
-    <label for="model">Model for the summary</label>
-    <select id="model">
-      <option value="claude-haiku-5-5">Claude Haiku 5.5 (recommended, about $0.02 a year)</option>
-      <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (more natural prose, about $0.30 a year)</option>
-      <option value="claude-opus-5-5">Claude Opus 5.5 (about $0.60 a year, no gain for this)</option>
-    </select>
-    <label for="key">Anthropic API key (optional: Claude writes the weekly summary)</label>
-    <input id="key" type="password" placeholder="sk-ant-…" autocomplete="off" />
-    <div class="row"><button class="primary" id="b-save">Save</button><span id="saved" class="muted"></span></div>
-  </div>
+  <details class="section" id="settings"><summary>Settings</summary>
+    <div class="card">
+      <label for="meter">House meter</label>
+      <select id="meter"><option value="">Automatic</option></select>
+      <label for="currency">Currency</label>
+      <input id="currency" placeholder="SEK" />
+      <label for="flat">Price per kWh when Homey reports none</label>
+      <input id="flat" type="number" step="0.01" placeholder="e.g. 2.0" />
+      <label for="cop">Heat pump efficiency (COP) for heat moved to it</label>
+      <input id="cop" type="number" step="0.1" min="1" max="6" placeholder="3" />
+      <label for="lang">Summary language</label>
+      <select id="lang"><option value="en">English</option><option value="sv">Svenska</option></select>
+      <label for="model">Model for the summary</label>
+      <select id="model">
+        <option value="claude-haiku-5-5">Claude Haiku 5.5 (recommended, about $0.02 a year)</option>
+        <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (more natural prose, about $0.30 a year)</option>
+        <option value="claude-opus-5-5">Claude Opus 5.5 (about $0.60 a year, no gain for this)</option>
+      </select>
+      <label for="key">Anthropic API key (optional: Claude writes the weekly summary)</label>
+      <input id="key" type="password" placeholder="sk-ant-…" autocomplete="off" />
+      <div class="row"><button class="primary" id="b-save">Save</button><span id="saved" class="muted"></span></div>
+    </div>
+  </details>
 
 <script>
   const COLORS = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6'];
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const r = (x, d = 0) => (x === null || x === undefined || !isFinite(x)) ? '–' : (Math.round(x * 10 ** d) / 10 ** d).toLocaleString();
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const nameOf = l => l.name || (l.suggestion ? `${l.suggestion} (likely)` : `${Math.round(l.medianW / 10) * 10} W on ${l.phases}`);
+  /** "570 W on L1+L2" (the app's name for a load nobody named) reads as an unknown load. */
+  const plain = text => String(text ?? '')
+    .replace(/\bA (\d[\d,]*) W load on (3-phase|L[123](?:\+L[123])*)/g, 'An unknown $1 W load ($2)')
+    .replace(/^(\d[\d,]*) W on (3-phase|L[123](?:\+L[123])*)$/, 'Unknown $1 W load ($2)');
+  const nameOf = l => l.name || (l.suggestion ? `${l.suggestion} (likely)` : plain(`${Math.round(l.medianW / 10) * 10} W on ${l.phases}`));
+  /** Show these on the page; the rest wait behind "show more". */
+  const TOP_TIPS = 3, TOP_LOADS = 5, MIN_LOAD_KWH_DAY = 0.5;
   let H = null, state = null, filled = false, pendingTest = null;
 
   function api(method, path, body) {
     return new Promise((res, rej) => H.api(method, path, body || null, (e, v) => e ? rej(e) : res(v)));
   }
 
+  const minutes = m => m >= 90 ? `${r(m / 60, 1)} h` : `${r(m)} min`;
+  const often = perDay => perDay >= 1.5 ? `${r(perDay)} times a day` : perDay >= 0.75 ? 'about once a day' : `about ${r(Math.max(1, perDay * 7))} times a week`;
+
+  // What the energy account's rows are called on the page, merged by that name (three loads the
+  // heat pump makes are one "Heatpump").
+  function groupOf(row) {
+    if (row.kind === 'always_on') return { key: 'always_on', name: 'Always on (fridge, network, standby)', color: css('--base') };
+    if (row.kind === 'weather') return { key: 'weather', name: 'Heating that follows the weather', color: css('--weather') };
+    if (row.kind === 'unexplained') return { key: 'unexplained', name: 'Not explained yet', color: css('--rest') };
+    return { key: `n:${row.name}`, name: plain(row.name), exact: row.exact };
+  }
+
   // The energy account per day: every kWh in one row, stacked; the rows that matter most get colours.
   function chart(accounts) {
     const el = document.getElementById('chart');
     const days = accounts.filter(d => d.coveredHours > 0);
-    if (!days.length) { el.innerHTML = '<span class="muted">Collecting the first day…</span>'; document.getElementById('legend').innerHTML = ''; return; }
-    const totals = new Map();
-    days.forEach(d => d.rows.forEach(row => { if (row.kind === 'metered' || row.kind === 'load') totals.set(row.key, { name: row.name, kWh: (totals.get(row.key)?.kWh || 0) + row.kWh, exact: row.exact }); }));
-    const top = [...totals.entries()].sort((a, b) => b[1].kWh - a[1].kWh).slice(0, 6).map(([k]) => k);
-    const colorOf = row => row.kind === 'always_on' ? css('--base') : row.kind === 'weather' ? css('--weather') : row.kind === 'unexplained' ? css('--rest') : top.includes(row.key) ? css(COLORS[top.indexOf(row.key)]) : css('--other');
-    const W = Math.max(280, el.clientWidth || 320), Hh = 170, pad = 22, bw = (W - pad) / days.length;
+    if (!days.length) { el.innerHTML = '<span class="muted">Collecting the first day…</span>'; document.getElementById('where').innerHTML = ''; return; }
+    const groups = new Map();
+    days.forEach(d => d.rows.forEach(row => {
+      const g = groupOf(row);
+      const cur = groups.get(g.key) || { ...g, kWh: 0, exact: false };
+      cur.kWh += row.kWh; cur.exact = cur.exact || !!row.exact;
+      groups.set(g.key, cur);
+    }));
+    const ranked = [...groups.values()].sort((a, b) => b.kWh - a.kWh);
+    const named = ranked.filter(g => !g.color);
+    named.slice(0, COLORS.length).forEach((g, i) => { g.color = css(COLORS[i]); });
+    named.slice(COLORS.length).forEach(g => { g.color = css('--other'); g.other = true; });
+    const colorOf = row => groups.get(groupOf(row).key).color;
+
+    const W = Math.max(280, el.clientWidth || 320), Hh = 150, pad = 22, bw = (W - pad) / days.length;
     const max = Math.max(...days.map(d => d.totalKWh), 1);
     let s = `<svg width="${W}" height="${Hh + 18}" role="img" aria-label="Energy per day">`;
     days.forEach((d, i) => {
@@ -138,104 +173,151 @@
       const order = ['metered', 'load', 'always_on', 'weather', 'unexplained'];
       [...d.rows].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).forEach(row => {
         const h = Math.max(0, row.kWh / max * (Hh - 6)); y -= h;
-        s += `<rect x="${pad + i * bw + 3}" y="${y}" width="${bw - 6}" height="${h}" fill="${colorOf(row)}"><title>${esc(row.name)}: ${r(row.kWh, 1)} kWh${row.exact ? ' (metered)' : ''}</title></rect>`;
+        s += `<rect x="${pad + i * bw + 3}" y="${y}" width="${bw - 6}" height="${h}" fill="${colorOf(row)}"><title>${esc(plain(row.name))}: ${r(row.kWh, 1)} kWh</title></rect>`;
       });
       s += `<text x="${pad + i * bw + bw / 2}" y="${Hh + 14}" font-size="10" text-anchor="middle" fill="${css('--muted')}">${d.date.slice(5)}</text>`;
     });
     s += `<text x="0" y="10" font-size="10" fill="${css('--muted')}">${r(max)} kWh</text></svg>`;
     el.innerHTML = s;
-    const has = kind => days.some(d => d.rows.some(x => x.kind === kind));
-    document.getElementById('legend').innerHTML =
-      top.map((k, i) => `<span><i style="background:${css(COLORS[i])}"></i>${esc(totals.get(k).name)}${totals.get(k).exact ? ' (meter)' : ''}</span>`).join('') +
-      (totals.size > top.length ? `<span><i style="background:${css('--other')}"></i>Other loads</span>` : '') +
-      (has('always_on') ? `<span><i style="background:${css('--base')}"></i>Always on</span>` : '') +
-      (has('weather') ? `<span><i style="background:${css('--weather')}"></i>Heating (outdoor temperature)</span>` : '') +
-      (has('unexplained') ? `<span><i style="background:${css('--rest')}"></i>Unexplained</span>` : '');
+
+    // The list: the six biggest by name, the rest as one line; kWh a day and share of the total.
+    const total = ranked.reduce((a, g) => a + g.kWh, 0) || 1;
+    const perDay = kWh => kWh / days.length;
+    const shown = ranked.filter(g => !g.other && perDay(g.kWh) >= 0.05);
+    const other = ranked.filter(g => g.other).reduce((a, g) => a + g.kWh, 0);
+    const line = (color, name, kWh, note) =>
+      `<i style="background:${color}"></i><div>${esc(name)}${note ? ` <span class="chip">${note}</span>` : ''}</div><div class="n">${r(perDay(kWh), 1)} kWh/day <span class="muted small">${r(kWh / total * 100)} %</span></div>`;
+    document.getElementById('where').innerHTML =
+      shown.map(g => line(g.color, g.name, g.kWh, g.exact ? 'measured' : '')).join('') +
+      (other > 0 ? line(css('--other'), 'Everything else found', other) : '');
   }
 
   const delay = ms => ms === null ? '' : Math.abs(ms) < 60000 ? `${Math.round(Math.abs(ms) / 1000)} s late` : `${r(Math.abs(ms) / 60000)} min late`;
   const phasesOf = sh => sh ? ['L1', 'L2', 'L3'].map((p, k) => sh[k] > 0.15 ? `${p} ${r(sh[k] * 100)} %` : '').filter(Boolean).join(', ') : '';
   function meteredCard(list, today) {
     const el = document.getElementById('metered');
-    if (!list.length) return;
+    const used = list.filter(m => m.matches + m.misses > 0 || (today && today.rows.some(x => x.key === `device:${m.id}`)));
+    if (!used.length) return;
     const kWh = id => { const row = today && today.rows.find(x => x.key === `device:${id}`); return row ? `${r(row.kWh, 1)} kWh` : '–'; };
-    const state = m => m.live ? '<span class="status-confirmed">subtracted live</span>'
-      : m.matches >= 3 && Math.abs(m.lagMs) > 20000 ? `energy only <span class="muted">(reports ${delay(m.lagMs)})</span>`
-      : m.misses >= 3 && m.misses > m.matches ? 'energy only <span class="muted">(not seen on the house meter)</span>'
+    const how = m => m.live ? '<span class="status-confirmed">taken out live</span>'
+      : m.matches >= 3 && Math.abs(m.lagMs) > 20000 ? `by its energy <span class="muted">(reports ${delay(m.lagMs)})</span>`
+      : m.misses >= 3 && m.misses > m.matches ? 'by its energy <span class="muted">(not seen on the house meter)</span>'
       : '<span class="muted">learning</span>';
-    el.innerHTML = '<table><tr><th>Device</th><th>Today</th><th>How</th><th>Phases</th></tr>' +
-      list.map(m => `<tr><td>${esc(m.name)}</td><td>${kWh(m.id)}</td><td>${state(m)}</td><td class="muted">${phasesOf(m.share)}</td></tr>`).join('') + '</table>' +
-      '<div class="muted" style="font-size:12px;margin-top:6px">A device that reports within seconds is taken out of the house meter live, so the loads nothing meters are easier to find. Slower ones (MELCloud) are counted by their energy.</div>';
+    el.innerHTML = '<table><tr><th>Device</th><th>Today</th><th>Counted</th><th>Phases</th></tr>' +
+      used.map(m => `<tr><td>${esc(m.name)}</td><td>${kWh(m.id)}</td><td>${how(m)}</td><td class="muted">${phasesOf(m.share)}</td></tr>`).join('') + '</table>' +
+      '<div class="muted small" style="margin-top:6px">A device that reports within seconds is taken out of the house meter live, so the loads nothing measures are easier to find. Slower ones (MELCloud) are counted by their energy.</div>';
+  }
+
+  /** A tip's title in plain words; the money is shown under it, so not in it twice. */
+  function tipTitle(f) {
+    const who = /^(.+): [\d,.]+ \S+\/month cheaper/.exec(f.title);
+    if (f.kind === 'shiftable' && who) return `Run ${plain(who[1]).replace(/^An /, 'the ')} in the day's cheapest hours`;
+    return plain(f.title);
+  }
+
+  /** What a tip means, in a sentence a person would say; the app's own detail for the rest. */
+  function tipText(f, cur) {
+    if (f.kind === 'shiftable' && f.costPerMonth !== null && f.savingPerMonth !== null) {
+      return `It costs about ${r(f.costPerMonth, -1)} ${cur} a month when it runs now. Started in the cheapest hours of each day, the same runs would cost about ${r(f.costPerMonth - f.savingPerMonth, -1)} ${cur}. ` +
+        'A timer, its own app or a Homey flow on the electricity price can start it then.';
+    }
+    return f.detail;
+  }
+
+  function tipCard(f, cur, testing) {
+    const money = f.savingPerMonth !== null ? `Save ~${r(f.savingPerMonth)} ${esc(cur)}/month` : f.costPerMonth !== null ? `Costs ${r(f.costPerMonth)} ${esc(cur)}/month` : '';
+    return `<div class="card tip">
+        <div class="title">${esc(tipTitle(f))}</div>
+        <div class="muted small" style="margin-top:4px">${esc(tipText(f, cur))}</div>
+        <div class="row wrap">
+          ${money ? `<span class="money">${money}</span>` : ''}
+          ${f.confidence !== 'high' ? '<span class="chip">not confirmed yet</span>' : ''}
+          ${f.loadId && f.experimentHours ? (testing(f.loadId) ? '<span class="status-running">Test running</span>' : `<button data-test="${esc(f.loadId)}" data-hours="${f.experimentHours}">Check it (${f.experimentHours} h test)</button>`) : ''}
+        </div>
+      </div>`;
+  }
+
+  /** One load. `own` is what it used a day that no device measures (the energy account's row, as in the chart). */
+  function loadRow(l, own, testing) {
+    const how = l.rhythmic ? `switches on every ${minutes(l.periodMinutes)} for ${minutes(l.medianMinutes)}, day and night: something on a thermostat`
+      : `runs ${minutes(l.medianMinutes)}, ${often(l.startsPerDay)}`;
+    const measured = l.source === 'device' ? ` · measured by <b>${esc(l.device)}</b>` : '';
+    return `<div class="load">
+        <div class="row" style="margin-top:0;justify-content:space-between;align-items:baseline">
+          <span class="name">${esc(nameOf(l))} ${l.running ? '<span class="chip on">on now</span>' : ''}</span>
+          <span class="n" style="white-space:nowrap"><b>${r(own, 1)}</b> kWh/day</span>
+        </div>
+        <div class="muted small">About ${r(l.medianW, -1)} W on ${esc(l.phases)}, ${how}${measured}${l.source === 'test' ? ' · confirmed by your test' : ''}</div>
+        ${l.suggestion ? `<div class="row small"><span class="muted">Looks like: <b>${esc(l.suggestion)}</b></span>
+          <button data-use="${esc(l.id)}" data-label="${esc(l.suggestion)}">That's right</button></div>` : ''}
+        <div class="row"><input data-name="${esc(l.id)}" value="${esc(l.source === 'user' ? l.name : '')}" placeholder="What is it? (e.g. Kitchen floor)" />
+          ${testing(l.id) ? '<span class="status-running">Test running</span>' : `<button data-test="${esc(l.id)}">Test</button>`}</div>
+      </div>`;
   }
 
   function render(s) {
     state = s;
     const cur = s.settings.currency;
-    document.getElementById('status').textContent = `${s.status}${s.meter ? '' : ''} · ${r(s.observedHours / 24, 1)} days observed`;
+    document.getElementById('status').textContent = `${s.status} · ${r(s.observedHours / 24, 1)} days observed`;
     const days = s.accounts.filter(d => d.coveredHours > 0);
     const tot = days.reduce((a, d) => a + d.totalKWh, 0);
-    const expl = days.reduce((a, d) => a + d.explainedShare * d.totalKWh, 0);
     const hours = days.reduce((a, d) => a + d.coveredHours, 0);
-    document.getElementById('k-explained').textContent = tot > 0 ? `${r(expl / tot * 100)} %` : '–';
-    document.getElementById('k-kwh').textContent = hours > 0 ? r(tot / hours * 24, 1) : '–';
-    const last = [...days].reverse().find(d => d.alwaysOnW !== null && d.coveredHours >= 20) || [...days].reverse().find(d => d.alwaysOnW !== null);
-    document.getElementById('k-base').textContent = last ? `${r(last.alwaysOnW, -1)} W` : '–';
-    const f0 = s.findings[0];
-    document.getElementById('k-top').textContent = f0 && (f0.savingPerMonth ?? f0.costPerMonth) !== null ? `${r(f0.savingPerMonth ?? f0.costPerMonth)} ${cur}` : '–';
+    const kWhDay = hours > 0 ? tot / hours * 24 : null;
+    document.getElementById('k-kwh').textContent = kWhDay === null ? '–' : r(kWhDay, 1);
+    document.getElementById('k-cost').textContent = kWhDay !== null && s.avgPrice !== null ? `${r(kWhDay * 30 * s.avgPrice, -1)} ${cur}` : '–';
 
     const testing = id => s.experiments.some(e => e.loadId === id && e.status === 'running');
+    const running = s.experiments.filter(e => e.status === 'running');
+    document.getElementById('running').innerHTML = running.map(e =>
+      `<div class="card" style="margin-top:8px"><span class="status-running">Test running:</span> ${esc(e.label || e.loadName)} is off until ${new Date(e.startedAt + e.hours * 3600000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}.</div>`).join('');
+
+    if (s.summary) document.getElementById('summary').innerHTML = `${esc(s.summary.text).replace(/\n\n/g, '<br><br>')}<div class="muted small" style="margin-top:6px">${s.summary.source === 'claude' ? 'Written by Claude' : 'Template'} · ${new Date(s.summary.at).toLocaleDateString()}${s.summary.error ? ` · ${esc(s.summary.error)}` : ''} · <button class="link" id="b-summary">Write it again</button></div>`;
+    else document.getElementById('summary').innerHTML = 'No summary yet. <button class="link" id="b-summary">Write it now</button>';
+
+    // Tips: the most money first; the rest wait behind one line.
+    const tips = [...s.findings].sort((a, b) => (b.savingPerMonth ?? -1) - (a.savingPerMonth ?? -1) || (b.costPerMonth ?? 0) - (a.costPerMonth ?? 0));
+    const moreTips = tips.length - TOP_TIPS;
+    document.getElementById('tips').innerHTML = tips.length
+      ? tips.slice(0, TOP_TIPS).map(f => tipCard(f, cur, testing)).join('') +
+        (moreTips > 0 ? `<details><summary>${moreTips} smaller tip${moreTips > 1 ? 's' : ''}</summary>${tips.slice(TOP_TIPS).map(f => tipCard(f, cur, testing)).join('')}</details>` : '')
+      : '<div class="card muted">Nothing yet: tips need a day or two of data.</div>';
+
     chart(s.accounts);
     meteredCard(s.metered, s.accounts[s.accounts.length - 1]);
 
-    document.getElementById('findings').innerHTML = s.findings.length ? s.findings.map(f => `
-      <div class="card finding">
-        <div class="title">${esc(f.title)}</div>
-        <div class="muted" style="margin-top:4px">${esc(f.detail)}</div>
-        <div class="row" style="align-items:center">
-          ${f.savingPerMonth !== null ? `<span class="money">Save ~${r(f.savingPerMonth)} ${esc(cur)}/month</span>` : f.costPerMonth !== null ? `<span class="money">${r(f.costPerMonth)} ${esc(cur)}/month</span>` : ''}
-          <span class="chip">${esc(f.confidence)} confidence</span>
-          ${f.loadId && f.experimentHours ? (testing(f.loadId) ? '<span class="status-running">Test running</span>' : `<button data-test="${esc(f.loadId)}" data-hours="${f.experimentHours}">Test it (${f.experimentHours} h)</button>`) : ''}
-        </div>
-      </div>`).join('') : '<div class="card muted">Nothing yet: findings need a day or two of data.</div>';
-
-    // Don't rebuild the list while the user is typing a name in it.
+    // Loads to name: the biggest that nothing names yet. Every load is in the list below them.
     const typing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.name;
-    if (!typing) document.getElementById('loads').innerHTML = s.loads.length ? s.loads.map((l, i) => `
-      <div class="load">
-        <div class="dot" style="background:${i < 6 ? css(COLORS[i]) : css('--other')}"></div>
-        <div>
-          <div class="name">${esc(nameOf(l))} ${l.running ? '<span class="chip on">running</span>' : ''}</div>
-          <div class="muted" style="font-size:12px">
-            <span class="chip">${esc(l.phases)}</span>${r(l.medianW, -1)} W · ${r(l.medianMinutes)} min runs · ${r(l.startsPerDay, 1)}/day
-            ${l.rhythmic ? ` · every ${r(l.periodMinutes)} min` : ''}
-            ${l.source === 'device' ? (l.score ? ` · matches <b>${esc(l.device)}</b> (F1 ${r(l.score.f1, 2)})` : ` · runs with <b>${esc(l.device)}</b>, counted by its meter`) : ''}
-            ${l.source === 'test' ? ' · confirmed by your test' : ''}
-          </div>
-          ${l.suggestion ? `<div class="row" style="align-items:center"><span class="muted" style="font-size:12px">Looks like: <b>${esc(l.suggestion)}</b></span>
-            <button data-use="${esc(l.id)}" data-label="${esc(l.suggestion)}">That's right</button></div>` : ''}
-          <div class="row"><input data-name="${esc(l.id)}" value="${esc(l.source === 'user' ? l.name : '')}" placeholder="Name it (e.g. Kitchen floor)" />
-            ${testing(l.id) ? '<span class="status-running" style="white-space:nowrap">Test running</span>' : `<button data-test="${esc(l.id)}">Test</button>`}</div>
-        </div>
-        <div class="right"><b>${r(l.kWhPerDay, 1)}</b> kWh/day<br><span class="muted">${l.costPerMonth !== null ? `${r(l.costPerMonth)} ${esc(cur)}/mo` : ''}</span></div>
-      </div>`).join('') : '<span class="muted">No loads yet. The first ones appear after a few hours.</span>';
+    if (!typing) {
+      const own = new Map();
+      days.forEach(d => d.rows.forEach(row => { if (row.kind === 'load') own.set(row.key.slice(5), (own.get(row.key.slice(5)) || 0) + row.kWh / days.length); }));
+      const ownOf = l => own.get(l.id) || 0;
+      const unknown = s.loads.filter(l => !l.name && ownOf(l) >= MIN_LOAD_KWH_DAY).sort((a, b) => ownOf(b) - ownOf(a)).slice(0, TOP_LOADS);
+      const ask = new Set(unknown.map(l => l.id));
+      document.getElementById('loads').innerHTML = unknown.length
+        ? '<div class="muted small" style="margin-bottom:8px">Nothing in Homey measures these. Name one if you know what it is, or switch it off and press Test to find out.</div>' +
+          unknown.map(l => loadRow(l, ownOf(l), testing)).join('')
+        : s.loads.length ? '<span class="muted">Nothing sizeable is left unknown: what uses energy is named or measured.</span>' : '<span class="muted">No loads yet. The first ones appear after a few hours.</span>';
+      const rest = s.loads.filter(l => !ask.has(l.id)).sort((a, b) => ownOf(b) - ownOf(a));
+      document.getElementById('all-wrap').classList.toggle('hidden', !rest.length);
+      document.getElementById('all-title').textContent = `All other loads found (${rest.length})`;
+      document.getElementById('allloads').innerHTML = rest.map(l => loadRow(l, ownOf(l), testing)).join('');
+    }
 
     const when = t => new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
     if (s.appliances && s.appliances.length) {
       document.getElementById('appliances').innerHTML = '<table><tr><th>Looks like</th><th>Runs</th><th>Last</th><th>kWh/run</th></tr>' +
-        s.appliances.map(x => `<tr><td><b>${esc(x.label)}</b> <span class="chip">${esc(x.phases)}</span><div class="muted" style="font-size:12px">${esc(x.reason)}</div></td><td>${x.sessions}</td><td>${when(x.lastStart)}</td><td>${r(x.kWhPerSession, 2)}</td></tr>`).join('') + '</table>' +
-        '<div class="muted" style="font-size:12px;margin-top:6px">Guessed from how typical appliances heat (two heats for a dishwasher, one for a washing machine, a cycling element for a dryer), not learned from your house. Once one has run three times it shows under Loads found, where "That\'s right" names it.</div>';
+        s.appliances.map(x => `<tr><td><b>${esc(x.label)}</b> <span class="chip">${esc(x.phases)}</span><div class="muted small">${esc(x.reason)}</div></td><td>${x.sessions}</td><td>${when(x.lastStart)}</td><td>${r(x.kWhPerSession, 2)}</td></tr>`).join('') + '</table>' +
+        '<div class="muted small" style="margin-top:6px">Guessed from how typical appliances heat (two heats for a dishwasher, one for a washing machine, a cycling element for a dryer), not learned from your house.</div>';
     }
-
     if (s.experiments.length) {
       document.getElementById('tests').innerHTML = '<table><tr><th>Switched off</th><th>Load</th><th>Result</th></tr>' +
-        s.experiments.slice().reverse().map(e => `<tr><td>${esc(e.label)}</td><td>${esc(e.loadName)}</td><td class="status-${e.status}">${esc(e.text)}</td></tr>`).join('') + '</table>';
+        s.experiments.slice().reverse().map(e => `<tr><td>${esc(e.label)}</td><td>${esc(plain(e.loadName))}</td><td class="status-${e.status}">${esc(e.text)}</td></tr>`).join('') + '</table>';
     }
     document.getElementById('validation').innerHTML = s.validation.length
-      ? '<table><tr><th>Device</th><th>Precision</th><th>Recall</th><th>F1</th><th>Runs</th></tr>' +
-        s.validation.map(v => `<tr><td>${esc(v.device)}</td><td>${r(v.score.precision, 2)}</td><td>${r(v.score.recall, 2)}</td><td><b>${r(v.score.f1, 2)}</b></td><td>${v.score.tp}/${v.score.tp + v.score.fn}</td></tr>`).join('') + '</table>' +
-        '<div class="muted" style="font-size:12px;margin-top:6px">Each device measures itself; the score says how often the house meter alone found its runs.</div>'
-      : '<span class="muted">No metered device matched yet (heat pump, EV charger, smart plugs appear here once they have run a few times).</span>';
-    if (s.summary) document.getElementById('summary').innerHTML = `${esc(s.summary.text)}<div class="muted" style="font-size:12px;margin-top:4px">${s.summary.source === 'claude' ? 'Written by Claude' : 'Template'} · ${new Date(s.summary.at).toLocaleString()}${s.summary.error ? ` · ${esc(s.summary.error)}` : ''}</div>`;
+      ? '<table><tr><th>Device</th><th>Its runs found</th><th>Found runs that were it</th></tr>' +
+        s.validation.map(v => `<tr><td>${esc(v.device)}</td><td>${r(v.score.recall * 100)} % <span class="muted">(${v.score.tp} of ${v.score.tp + v.score.fn})</span></td><td>${r(v.score.precision * 100)} %</td></tr>`).join('') + '</table>' +
+        '<div class="muted small" style="margin-top:6px">Each device measures itself, so it shows how well the house meter alone finds a load.</div>'
+      : '<span class="muted">No measured device matched yet (heat pump, EV charger, smart plugs appear here once they have run a few times).</span>';
 
     // The settings fields are filled once; the minute refresh must not overwrite what is typed.
     if (!filled) {
@@ -252,6 +334,11 @@
   }
 
   document.addEventListener('click', async ev => {
+    if (ev.target.id === 'b-summary') {
+      document.getElementById('summary').textContent = 'Writing…';
+      await api('POST', '/summary'); reload();
+      return;
+    }
     const u = ev.target.closest('[data-use]');
     if (u) { await api('POST', '/name', { loadId: u.dataset.use, name: u.dataset.label }); reload(); return; }
     // A form on the page, not prompt(): the Homey app's settings view does not show browser dialogs.
@@ -304,10 +391,6 @@
         set('ai_model', document.getElementById('model').value),
         key ? set('anthropic_api_key', key) : Promise.resolve(),
       ]).then(() => { document.getElementById('saved').textContent = 'Saved'; document.getElementById('key').value = ''; reload(); });
-    };
-    document.getElementById('b-summary').onclick = async () => {
-      document.getElementById('summary').textContent = 'Writing…';
-      await api('POST', '/summary'); reload();
     };
     reload();
     setInterval(reload, 60000);

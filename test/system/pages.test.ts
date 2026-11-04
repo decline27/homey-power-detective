@@ -89,6 +89,8 @@ async function open(file: string, opts: { width?: number; height?: number; dark?
 }
 
 const text = (page: Page, sel: string) => page.locator(sel).innerText();
+/** Text of a part behind a closed <details>: not rendered, so it has no innerText. */
+const content = async (page: Page, sel: string) => (await page.locator(sel).textContent()) ?? '';
 
 beforeAll(async () => {
   standardDevices();
@@ -119,37 +121,47 @@ maybe('settings page: shows what was found, and every action lands in the app', 
   floorId = floor.id;
 
   const { page, errors } = await open('settings/index.html', { width: 380 });
-  await page.waitForFunction(() => document.getElementById('k-explained')!.textContent !== '–');
+  await page.waitForFunction(() => document.getElementById('k-kwh')!.textContent !== '–');
   expect(await text(page, '#status')).toMatch(/^Listening to Pulse · 1\.\d days observed$/);
-  expect(await text(page, '#k-explained')).toMatch(/^\d+ %$/);
-  expect(await text(page, '#k-base')).toMatch(/^\d[\d,]* W$/);
-  expect(await text(page, '#k-top')).toMatch(/^\d[\d,]* SEK$/);
+  // The answer first: what the house uses a day and costs a month.
+  expect(await text(page, '#k-kwh')).toMatch(/^\d+(\.\d)?$/);
+  expect(await text(page, '#k-cost')).toMatch(/^\d[\d,]* SEK$/);
   expect(await page.locator('#chart svg rect').count()).toBeGreaterThan(3);
-  expect(await text(page, '#loads')).toMatch(/every 6\d min/);
-  expect(await text(page, '#loads')).toMatch(/matches Värmepump \(F1 0\.\d+\)/);
-  expect(await text(page, '#validation')).toContain('Värmepump');
-  // The energy account: the chart's legend names the metered heat pump; the device card says
+  // The floor heater is unknown and unmeasured: it is asked about, in words.
+  expect(await text(page, '#loads')).toMatch(/every 6\d min for 2\d min, day and night/);
+  // The heat pump is measured: not asked about, listed with the rest.
+  expect(await text(page, '#loads')).not.toContain('Värmepump');
+  expect(await content(page, '#allloads')).toMatch(/measured by Värmepump/);
+  expect(await content(page, '#validation')).toContain('Värmepump');
+  // Where the energy goes names the metered heat pump; the device table (under Details) says
   // what was learned about it (MELCloud reports minutes late: counted by energy, not subtracted).
-  expect(await text(page, '#legend')).toContain('Värmepump');
-  expect(await text(page, '#metered')).toMatch(/Värmepump[\s\S]*energy only/);
-  expect(await text(page, '#metered')).toMatch(/3[\s\S]*min late/);
+  expect(await text(page, '#where')).toContain('Värmepump');
+  expect(await content(page, '#metered')).toMatch(/Värmepump[\s\S]*by its energy/);
+  expect(await content(page, '#metered')).toMatch(/3[\s\S]*min late/);
   expect(await page.locator('#meter option').count()).toBe(2);
+  // Short: what is not the answer waits behind a click.
+  expect(await page.locator('#details').evaluate(d => (d as HTMLDetailsElement).open)).toBe(false);
+  expect(await page.locator('#settings').evaluate(d => (d as HTMLDetailsElement).open)).toBe(false);
   // Fits a phone: nothing wider than the screen.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(380);
 
-  // Name a load: typed in the list, saved on change, shown after the reload.
+  // Name a load: typed in the list, saved on change; named, it moves to the full list.
   await page.locator(`input[data-name="${floorId}"]`).fill('Kitchen floor');
   await page.locator(`input[data-name="${floorId}"]`).press('Tab');
-  await page.waitForFunction(() => document.getElementById('loads')!.innerText.includes('Kitchen floor'));
+  await page.waitForFunction(() => document.getElementById('allloads')!.textContent!.includes('Kitchen floor'));
   expect((homey.settings.get('load_names') as Record<string, string>)[floorId]).toBe('Kitchen floor');
 
-  // Start a test from the load's button: the prompt's answer becomes the test's label.
-  page.once('dialog', d => d.accept('Kitchen thermostat'));
-  await page.locator(`#loads button[data-test="${floorId}"]`).click();
-  await page.waitForFunction(() => document.getElementById('tests')!.innerText.includes('Kitchen thermostat'));
+  // Start a test from the load's button: the form on the page (Homey shows no browser dialogs).
+  await page.click('#all-title');
+  await page.locator(`#allloads button[data-test="${floorId}"]`).click();
+  await page.fill('#tf-label', 'Kitchen thermostat');
+  await page.click('#tf-start');
+  await page.waitForFunction(() => document.getElementById('tests')!.textContent!.includes('Kitchen thermostat'));
   expect((homey.settings.get('experiments') as any[])[0]).toMatchObject({ loadId: floorId, label: 'Kitchen thermostat', hours: 4 });
+  await page.waitForFunction(() => document.getElementById('running')!.innerText.includes('Test running'));
 
   // Settings: saved as typed, the COP clamped to what a heat pump can do.
+  await page.click('#settings > summary');
   await page.fill('#currency', 'NOK');
   await page.fill('#flat', '1.5');
   await page.fill('#cop', '12');
