@@ -119,6 +119,9 @@ maybe('settings page: shows what was found, and every action lands in the app', 
   await sim.advance(30 * HOUR);
   const floor = (await api.getState({ homey })).loads.find((l: any) => l.phases === 'L1' && Math.abs(l.medianW - 1330) < 80);
   floorId = floor.id;
+  // Opened while the floor heater runs, so it shows under "On now".
+  await sim.until(() => house.isOn('floor', homey.now), 70 * MIN);
+  await sim.advance(2 * MIN);
 
   const { page, errors } = await open('settings/index.html', { width: 380 });
   await page.waitForFunction(() => document.getElementById('k-kwh')!.textContent !== '–');
@@ -145,14 +148,26 @@ maybe('settings page: shows what was found, and every action lands in the app', 
   // Fits a phone: nothing wider than the screen.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(380);
 
-  // Name a load: typed in the list, saved on change; named, it moves to the full list.
-  await page.locator(`input[data-name="${floorId}"]`).fill('Kitchen floor');
-  await page.locator(`input[data-name="${floorId}"]`).press('Tab');
+  // On now: what the house draws, the floor heater by size while it has no name; named on the spot.
+  expect(await text(page, '#now')).toMatch(/The house draws [\d.,]+ kW/);
+  expect(await text(page, '#now')).toMatch(/Unknown load on L1\s+usually about 1\.3 kW, since \d\d:\d\d\s+1\.3 kW\s+What is it\?/);
+  await page.click(`#now button[data-nameit="${floorId}"]`);
+  expect(await text(page, '#nf-title')).toMatch(/^Unknown load on L1, on since \d\d:\d\d$/);
+  await page.fill('#nf-name', 'Floor');
+  await page.click('#nf-save');
+  await page.waitForFunction(() => /Floor\s+since/.test(document.getElementById('now')!.innerText));
+  expect((homey.settings.get('load_names') as Record<string, string>)[floorId]).toBe('Floor');
+  expect(await page.locator('#nameform').isHidden()).toBe(true);
+  expect(await page.locator(`#now button[data-nameit="${floorId}"]`).count()).toBe(0);
+  // Named, it left the loads to name; renamed in the full list, saved on change.
+  expect(await text(page, '#loads')).not.toMatch(/every 6\d min for 2\d min/);
+  await page.click('#all-title');
+  await page.locator(`#allloads input[data-name="${floorId}"]`).fill('Kitchen floor');
+  await page.locator(`#allloads input[data-name="${floorId}"]`).press('Tab');
   await page.waitForFunction(() => document.getElementById('allloads')!.textContent!.includes('Kitchen floor'));
   expect((homey.settings.get('load_names') as Record<string, string>)[floorId]).toBe('Kitchen floor');
 
   // Start a test from the load's button: the form on the page (Homey shows no browser dialogs).
-  await page.click('#all-title');
   await page.locator(`#allloads button[data-test="${floorId}"]`).click();
   await page.fill('#tf-label', 'Kitchen thermostat');
   await page.click('#tf-start');

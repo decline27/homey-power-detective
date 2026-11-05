@@ -29,6 +29,8 @@
     .where { display: grid; grid-template-columns: 12px 1fr auto; gap: 4px 8px; align-items: center; margin-top: 10px; }
     .where i { width: 10px; height: 10px; border-radius: 3px; }
     .where .n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .now { display: grid; grid-template-columns: 1fr auto auto; gap: 8px 10px; align-items: center; margin: 8px 0; }
+    .now .n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; font-weight: 600; }
     .load { padding: 10px 0; border-top: 1px solid var(--line); }
     .load:first-child { border-top: 0; padding-top: 0; }
     .name { font-weight: 600; }
@@ -69,6 +71,17 @@
     </div>
     <div class="muted small">Average of the last 7 days, from your house meter.</div>
   </div>
+
+  <h2>On now</h2>
+  <div class="card" id="now"><span class="muted">Loading…</span></div>
+  <!-- Outside the list the minute refresh rebuilds, so it stays while it is filled in. -->
+  <div class="card hidden" id="nameform">
+    <div class="name" id="nf-title"></div>
+    <label for="nf-name">What is it? The name is used from now on, and for its earlier runs.</label>
+    <input id="nf-name" placeholder="e.g. Dishwasher" />
+    <div class="row"><button class="primary" id="nf-save">Save</button><button id="nf-cancel">Cancel</button></div>
+  </div>
+
   <div class="card say" id="summary">No summary yet.</div>
 
   <h2>What you can do</h2>
@@ -129,7 +142,7 @@
   const nameOf = l => l.name || (l.suggestion ? `${l.suggestion} (likely)` : plain(`${Math.round(l.medianW / 10) * 10} W on ${l.phases}`));
   /** Show these on the page; the rest wait behind "show more". */
   const TOP_TIPS = 3, TOP_LOADS = 5, MIN_LOAD_KWH_DAY = 0.5;
-  let H = null, state = null, filled = false, pendingTest = null;
+  let H = null, state = null, filled = false, pendingTest = null, pendingName = null;
 
   function api(method, path, body) {
     return new Promise((res, rej) => H.api(method, path, body || null, (e, v) => e ? rej(e) : res(v)));
@@ -255,8 +268,32 @@
       </div>`;
   }
 
+  const kW = w => Math.abs(w) >= 1000 ? `${r(w / 1000, 1)} kW` : `${r(w, -1)} W`;
+  const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  /** What is on now: each load by name, and what the house draws besides. A load can be named on the spot. */
+  function nowCard(s) {
+    const rows = s.onNow || [];
+    const listed = rows.reduce((a, x) => a + x.w, 0);
+    const rest = s.totalW === null || s.totalW === undefined ? null : s.totalW - listed;
+    // A load nobody named is told by its phase; its usual size goes under it, next to what it draws now.
+    const title = x => x.named ? x.name : x.suggestion ? `${x.suggestion} (likely)` : x.loadId ? `Unknown load on ${x.phases}` : `New load on ${x.phases}`;
+    const line = x => `<div>${esc(title(x))}${x.loadId ? '' : ' <span class="chip">not learned yet</span>'}
+          <div class="muted small">${!x.named && x.usualW ? `usually about ${kW(x.usualW)}, ` : ''}since ${clock(x.since)}</div></div>
+        <div class="n">${kW(x.w)}</div>
+        <div>${!x.named && x.loadId ? `<button data-nameit="${esc(x.loadId)}" data-label="${esc(x.suggestion || '')}" data-what="${esc(`${title(x)}, on since ${clock(x.since)}`)}">What is it?</button>` : ''}</div>`;
+    document.getElementById('now').innerHTML =
+      (rest !== null ? `<div class="muted small">The house draws <b>${kW(s.totalW)}</b>.</div>` : '') +
+      (rows.length ? `<div class="now">${rows.map(line).join('')}</div>` : '<div class="muted" style="margin-top:6px">Nothing big is on.</div>') +
+      (rest === null ? ''
+        : rest < -0.1 * s.totalW ? '<div class="muted small">Together these are more than the house draws: one of them has stopped without it being seen.</div>'
+        : rest > 0 ? `<div class="muted small">The rest, ${kW(rest)}, is always-on and small loads.</div>` : '') +
+      (rows.some(x => !x.named && x.loadId) ? '<div class="muted small" style="margin-top:6px">Know what one is? Naming it while it runs is the surest way to teach the app.</div>' : '');
+  }
+
   function render(s) {
     state = s;
+    nowCard(s);
     const cur = s.settings.currency;
     document.getElementById('status').textContent = `${s.status} · ${r(s.observedHours / 24, 1)} days observed`;
     const days = s.accounts.filter(d => d.coveredHours > 0);
@@ -341,6 +378,29 @@
     }
     const u = ev.target.closest('[data-use]');
     if (u) { await api('POST', '/name', { loadId: u.dataset.use, name: u.dataset.label }); reload(); return; }
+    const nf = document.getElementById('nameform');
+    const n = ev.target.closest('[data-nameit]');
+    if (n) {
+      pendingName = n.dataset.nameit;
+      document.getElementById('nf-title').textContent = n.dataset.what;
+      document.getElementById('nf-name').value = n.dataset.label || '';
+      nf.classList.remove('hidden');
+      document.getElementById('nf-name').focus();
+      return;
+    }
+    if (ev.target.id === 'nf-cancel') { nf.classList.add('hidden'); pendingName = null; return; }
+    if (ev.target.id === 'nf-save' && pendingName) {
+      const name = document.getElementById('nf-name').value.trim();
+      if (!name) { document.getElementById('nf-name').focus(); return; }
+      ev.target.disabled = true;
+      try {
+        await api('POST', '/name', { loadId: pendingName, name });
+        nf.classList.add('hidden');
+        pendingName = null;
+        reload();
+      } finally { ev.target.disabled = false; }
+      return;
+    }
     // A form on the page, not prompt(): the Homey app's settings view does not show browser dialogs.
     const form = document.getElementById('testform');
     const t = ev.target.closest('[data-test]');

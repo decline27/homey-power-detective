@@ -1,4 +1,4 @@
-import { analyse, displayName, meteredRunOf, nameFromDevices, startsOfStoppedDevices } from '../../src/homey/analysis';
+import { LoadView, analyse, displayName, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
 import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
@@ -272,6 +272,34 @@ describe('analysis', () => {
     // The EV charger, same phases, was on too and still is: the start may be its.
     const both = [...refs, { id: 'ev', name: 'Easee', intervals: [{ start: T0, end: T0 + 95 * MIN }] }];
     expect(startsOfStoppedDevices(open, both, shares, T0 + 95 * MIN)).toEqual([]);
+  });
+
+  test('on now: the running starts by name, parts of one load as one row; a start no load explains has nothing to name', () => {
+    const { clusterActivations } = jest.requireActual('../../src/engine/clustering');
+    const runs = (delta: [number, number, number], n: number) =>
+      Array.from({ length: n }, (_, i) => ({ start: T0 + i * 3 * 60 * MIN, end: T0 + i * 3 * 60 * MIN + 40 * MIN, delta }));
+    const loads = clusterActivations([...runs([300, 300, 300], 6), ...runs([0, 2500, 0], 6)], { from: T0, to: T0 + 18 * 60 * MIN });
+    const hp = loads.find((c: any) => c.phases === '3-phase');
+    const l2 = loads.find((c: any) => c.phases === 'L2');
+    const view = (c: any, name: string | null, suggestion: string | null = null) =>
+      ({ id: c.id, name, phases: c.phases, medianW: c.medianW, suggestion } as LoadView);
+    const now = T0 + 20 * 60 * MIN;
+    const open = (t: number, a: number, b: number, c: number) => [t, t, a, b, c];
+    const engine = PowerEngine.restore({
+      version: 1,
+      activations: [],
+      // Two steps of the heat pump, the spa heater, and a 600 W load on L3 nothing has learned.
+      open: [open(now - 30 * MIN, 300, 300, 300), open(now - 20 * MIN, 290, 310, 300), open(now - 10 * MIN, 0, 2500, 0), open(now - 5 * MIN, 0, 0, 600)],
+      days: [],
+      firstReading: T0,
+      lastReading: now,
+    });
+    const rows = onNow(engine, loads, [view(hp, 'Heatpump'), view(l2, null, 'Kettle')], now);
+    expect(rows).toEqual([
+      { loadId: l2.id, name: 'Kettle (likely)', named: false, suggestion: 'Kettle', phases: 'L2', usualW: 2500, w: 2500, since: now - 10 * MIN },
+      { loadId: hp.id, name: 'Heatpump', named: true, suggestion: null, phases: '3-phase', usualW: 900, w: 1800, since: now - 30 * MIN },
+      { loadId: null, name: '600 W on L3', named: false, suggestion: null, phases: 'L3', usualW: null, w: 600, since: now - 5 * MIN },
+    ]);
   });
 
   test('programme mode: a plug-metered appliance whose heater is a part of the run', () => {

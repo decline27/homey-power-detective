@@ -2,7 +2,7 @@
  * Everything the settings page, the devices and the flows show, worked out from the engine, the
  * metered devices and the prices. Pure: the app calls it every few minutes.
  */
-import { classify } from '../engine/clustering';
+import { classify, phaseLabel, phaseShare } from '../engine/clustering';
 import { PowerEngine } from '../engine/engine';
 import { LabelMatch, Reference, matchReferences, silentStretches } from '../engine/labels';
 import { Score } from '../engine/score';
@@ -133,12 +133,63 @@ const HEAT_PUMP_NAME = /heat ?pump|värmepump|varmepump|ecodan|nibe|thermia/i;
  * Loads running now: the open starts, each with the load it is. A start older than its load's
  * longest plausible run is a missed stop, not a load still running.
  */
-export function runningNow(engine: PowerEngine, clusters: LoadCluster[], now: number): Array<{ t: number; w: number; cluster: LoadCluster | null }> {
+export function runningNow(
+  engine: PowerEngine,
+  clusters: LoadCluster[],
+  now: number
+): Array<{ t: number; w: number; delta: Vec3; cluster: LoadCluster | null }> {
   return engine
     .running()
     .map(st => ({ st, cluster: classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters, undefined, true) }))
     .filter(x => !x.cluster || now - x.st.t <= x.cluster.maxMinutes * 60_000)
-    .map(x => ({ t: x.st.t, w: x.st.delta[0] + x.st.delta[1] + x.st.delta[2], cluster: x.cluster }));
+    .map(x => ({ t: x.st.t, w: x.st.delta[0] + x.st.delta[1] + x.st.delta[2], delta: x.st.delta, cluster: x.cluster }));
+}
+
+export interface OnNowRow {
+  /** The load to name, when the start is one; null for a start no load explains yet. */
+  loadId: string | null;
+  name: string;
+  /** Named by the user, a device or a test (a guessed appliance is not). */
+  named: boolean;
+  /** A guess the user can accept when naming it. */
+  suggestion: string | null;
+  phases: string;
+  /** What the load usually draws (W); null for a start no load explains. */
+  usualW: number | null;
+  /** What it switched on with this time (W). */
+  w: number;
+  since: number;
+}
+
+/**
+ * What is on now, as the house meter shows it: the running starts by load, one row per name (the
+ * parts of one device, a modulating heat pump's steps, are one row), biggest first.
+ */
+export function onNow(engine: PowerEngine, clusters: LoadCluster[], loads: LoadView[], now: number): OnNowRow[] {
+  const rows = new Map<string, OnNowRow>();
+  for (const x of runningNow(engine, clusters, now)) {
+    if (x.w <= 0) continue;
+    const load = x.cluster ? loads.find(l => l.id === x.cluster!.id) : undefined;
+    const phases = load?.phases ?? phaseLabel(phaseShare(x.delta));
+    const name = load ? displayName(load) : displayName({ name: null, phases, medianW: x.w });
+    const prev = rows.get(name);
+    if (prev) {
+      prev.w += x.w;
+      prev.since = Math.min(prev.since, x.t);
+      continue;
+    }
+    rows.set(name, {
+      loadId: load?.id ?? null,
+      name,
+      named: !!load?.name,
+      suggestion: load?.suggestion ?? null,
+      phases,
+      usualW: load ? Math.round(load.medianW) : null,
+      w: x.w,
+      since: x.t,
+    });
+  }
+  return [...rows.values()].map(r => ({ ...r, w: Math.round(r.w) })).sort((a, b) => b.w - a.w);
 }
 
 export function displayName(v: { name: string | null; phases: string; medianW: number; suggestion?: string | null }): string {

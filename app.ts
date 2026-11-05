@@ -14,7 +14,7 @@ import { classify } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
 import { Activation, StepEvent, activationKWh, activationW } from './src/engine/types';
 import { DayMeter, DayRecord } from './src/engine/day-meter';
-import { Analysis, UserSettings, analyse, displayName, meteredShares, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
+import { Analysis, UserSettings, analyse, displayName, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
 import { MeteredDevices } from './src/homey/metered';
 import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
@@ -498,8 +498,13 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     const a = this.analysis ?? (await this.refresh());
     const { clusters: _clusters, ...rest } = a;
     void _clusters;
+    const now = Date.now();
+    const total = this.latest.get('measure_power');
     return {
       ...rest,
+      // Live, not from the last analysis: what the house meter shows now.
+      onNow: onNow(this.engine, a.clusters, a.loads, now),
+      totalW: total && now - total.at < 120_000 ? Math.round(total.value) : null,
       status: this.status,
       meter: this.meterName,
       summary: this.homey.settings.get(SETTINGS.summary) ?? null,
