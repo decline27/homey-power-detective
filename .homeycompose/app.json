@@ -25,6 +25,8 @@
     "setName": { "method": "POST", "path": "/name" },
     "startTest": { "method": "POST", "path": "/test" },
     "writeSummary": { "method": "POST", "path": "/summary" },
-    "getSavedState": { "method": "GET", "path": "/debug/state" }
+    "getSavedState": { "method": "GET", "path": "/debug/state" },
+    "getRawDays": { "method": "GET", "path": "/debug/raw" },
+    "getRawDay": { "method": "GET", "path": "/debug/raw/:date" }
   }
 }

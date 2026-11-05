@@ -19,12 +19,15 @@ import { MeteredDevices } from './src/homey/metered';
 import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
 import { PRICE_CAPABILITIES, PriceBook } from './src/homey/prices';
+import { RawRecorder } from './src/homey/recorder';
 import { ReferenceTracker, isLoadDevice } from './src/homey/references';
 import { Experiment, hoursNeeded } from './src/insight/experiments';
 import { SummaryInput, accountFacts, summarize } from './src/insight/summary';
 
 /** Homey keeps /userdata across restarts and updates. */
 const STATE_FILE = process.env.POWER_DETECTIVE_STATE ?? '/userdata/state.json';
+/** The raw meter and device values, next to the state (see RawRecorder). */
+const RAW_DIR = `${STATE_FILE.replace(/[^/]*$/, '')}raw`;
 const SAMPLE_MS = 10_000;
 const REFERENCE_MS = 60_000;
 const ANALYSE_MS = 5 * 60_000;
@@ -66,6 +69,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
   private metered!: MeteredDevices;
   private house!: DayMeter;
   private temps = new TemperatureBook();
+  private recorder!: RawRecorder;
   /** Live power subscriptions to metered devices, by device id. */
   private deviceInstances = new Map<string, any>();
   private latest = new Map<string, Latest>();
@@ -85,6 +89,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
 
   async onInit(): Promise<void> {
     this.timeZone = this.homey.clock.getTimezone() || this.timeZone;
+    this.recorder = new RawRecorder(RAW_DIR, this.timeZone);
     const saved = this.load();
     this.engine = PowerEngine.restore(saved?.engine, this.timeZone);
     this.refs = ReferenceTracker.restore(saved?.refs);
@@ -117,6 +122,47 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.deviceInstances.forEach(i => i?.destroy?.());
     this.deviceInstances.clear();
     this.save();
+    this.flushRaw();
+  }
+
+  /** A value from the house meter: kept for the next reading and recorded. */
+  private meterValue(cap: string, value: number, at: number): void {
+    this.latest.set(cap, { value, at });
+    try {
+      this.recorder.meter(at, cap, value);
+    } catch (e) {
+      this.error('Recorder', e);
+    }
+  }
+
+  private devicePower(id: string, name: string, value: number, at: number): void {
+    this.metered.power(id, name, value, at);
+    this.recordDevice(id, name, value, at);
+  }
+
+  private recordDevice(id: string, name: string, value: number, at: number): void {
+    try {
+      this.recorder.device(at, id, name, value);
+    } catch (e) {
+      this.error('Recorder', e);
+    }
+  }
+
+  private flushRaw(): void {
+    try {
+      this.recorder.flush();
+    } catch (e) {
+      this.error('Recorder', e);
+    }
+  }
+
+  rawDays() {
+    this.flushRaw();
+    return this.recorder.days();
+  }
+
+  rawDay(date: string) {
+    return this.recorder.read(date);
   }
 
   // ---- house meter -------------------------------------------------------------------------
@@ -160,10 +206,10 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     for (const cap of ['measure_power', ...PHASE_CURRENT, ...PHASE_VOLTAGE]) {
       if (!device.capabilities?.includes(cap)) continue;
       this.instances.push(
-        device.makeCapabilityInstance(cap, (value: number) => this.latest.set(cap, { value, at: Date.now() }))
+        device.makeCapabilityInstance(cap, (value: number) => this.meterValue(cap, value, Date.now()))
       );
     }
-    latestFromDevice(device, Date.now()).forEach((v, k) => this.latest.set(k, v));
+    latestFromDevice(device, Date.now()).forEach((v, k) => this.meterValue(k, v.value, v.at));
     this.status = `Listening to ${meter.name}`;
     this.log(this.status, device.capabilities?.includes('measure_current.L1') ? '(per phase)' : '(total only)');
   }
@@ -185,7 +231,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       if (this.meterId && this.api) {
         this.api.devices
           .getDevice({ id: this.meterId })
-          .then((d: DeviceLike) => latestFromDevice(d, now).forEach((v, k) => this.latest.set(k, v)))
+          .then((d: DeviceLike) => latestFromDevice(d, now).forEach((v, k) => this.meterValue(k, v.value, v.at)))
           .catch(() => undefined);
       }
       return;
@@ -243,6 +289,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
 
   private async trackDevices(): Promise<void> {
     if (!this.api || !this.meterId) await this.connect();
+    this.flushRaw();
     const now = Date.now();
     const devices = await this.devices();
     const own = new Set(devices.filter(d => d.driverId?.includes('com.decline27.powerdetective')).map(d => d.id));
@@ -273,12 +320,16 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       const power = d.capabilitiesObj!.measure_power!.value as number;
       const counter = d.capabilitiesObj?.meter_power?.value;
       if (typeof counter === 'number') this.metered.counter(d.id, counter, now);
-      if (this.deviceInstances.has(d.id)) continue;
-      this.metered.power(d.id, name, power, now);
+      if (this.deviceInstances.has(d.id)) {
+        // Recorded when it changed: a device whose live updates stall still shows in the record.
+        this.recordDevice(d.id, name, power, now);
+        continue;
+      }
+      this.devicePower(d.id, name, power, now);
       const make = (d as { makeCapabilityInstance?: (cap: string, fn: (v: number) => void) => unknown }).makeCapabilityInstance;
       if (typeof make !== 'function') continue;
       try {
-        const inst = make.call(d, 'measure_power', (v: number) => this.metered.power(d.id, name, v, Date.now()));
+        const inst = make.call(d, 'measure_power', (v: number) => this.devicePower(d.id, name, v, Date.now()));
         this.deviceInstances.set(d.id, inst);
       } catch (e) {
         this.error('Subscribe', d.id, e);

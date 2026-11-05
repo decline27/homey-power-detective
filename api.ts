@@ -2,6 +2,7 @@
 interface Ctx {
   homey: { app: any };
   body?: any;
+  params?: Record<string, string>;
 }
 
 module.exports = {
@@ -34,5 +35,17 @@ module.exports = {
   /** The state as last saved, to replay the analysis off the Homey (app logs cannot be read). */
   async getSavedState({ homey }: Ctx) {
     return homey.app.savedState();
+  },
+
+  /** The days of raw meter values on file (see RawRecorder). */
+  async getRawDays({ homey }: Ctx) {
+    return homey.app.rawDays();
+  },
+
+  /** One day of raw values, gzipped and base64-encoded. */
+  async getRawDay({ homey, params }: Ctx) {
+    const day = homey.app.rawDay(String(params?.date ?? ''));
+    if (!day) throw new Error('No such day');
+    return day;
   },
 };

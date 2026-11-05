@@ -12,6 +12,7 @@
     "test:system": "jest test/system",
     "bench:deddiag": "tsc -p tsconfig.bench.json && node .benchbuild/test/bench/deddiag.js",
     "bench:homey": "tsc -p tsconfig.bench.json && node .benchbuild/test/bench/homey-day.js",
+    "bench:replay": "tsc -p tsconfig.bench.json && node .benchbuild/test/bench/replay.js",
     "validate": "homey app validate --level verified"
   },
   "dependencies": {

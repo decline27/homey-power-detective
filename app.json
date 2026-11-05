@@ -56,6 +56,14 @@
     "getSavedState": {
       "method": "GET",
       "path": "/debug/state"
+    },
+    "getRawDays": {
+      "method": "GET",
+      "path": "/debug/raw"
+    },
+    "getRawDay": {
+      "method": "GET",
+      "path": "/debug/raw/:date"
     }
   },
   "flow": {
