@@ -14,7 +14,7 @@ import { classify } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
 import { Activation, StepEvent, activationKWh, activationW } from './src/engine/types';
 import { DayMeter, DayRecord } from './src/engine/day-meter';
-import { Analysis, UserSettings, analyse, displayName, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
+import { Analysis, FlowLike, UserSettings, analyse, displayName, flowsRunningOnPrice, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
 import { MeteredDevices } from './src/homey/metered';
 import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
@@ -352,14 +352,36 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     };
   }
 
+  /** Devices an enabled flow already runs on the electricity price, with the flow's name (read hourly). */
+  private priceFlowCache: { at: number; byDevice: Map<string, string> } | null = null;
+  private async priceFlows(now: number): Promise<Map<string, string>> {
+    if (this.priceFlowCache && now - this.priceFlowCache.at < 3_600_000) return this.priceFlowCache.byDevice;
+    let byDevice = this.priceFlowCache?.byDevice ?? new Map<string, string>();
+    try {
+      if (this.api) {
+        const [plain, advanced] = await Promise.all([
+          this.api.flow.getFlows().catch(() => ({})),
+          this.api.flow.getAdvancedFlows().catch(() => ({})),
+        ]);
+        byDevice = flowsRunningOnPrice([...Object.values(plain ?? {}), ...Object.values(advanced ?? {})] as FlowLike[]);
+      }
+    } catch (e) {
+      this.error('Flows', e);
+    }
+    this.priceFlowCache = { at: now, byDevice };
+    return byDevice;
+  }
+
   async refresh(): Promise<Analysis> {
     const now = Date.now();
+    const priceFlows = await this.priceFlows(now);
     this.analysis = analyse(this.engine, this.refs.references(), this.refs.heatPumpIds(), this.prices, this.userSettings(), now, {
       house: this.house.all(),
       metered: this.metered,
       temps: this.temps,
       deviceMatches: this.deviceMatches,
       classes: this.refs.classes(),
+      priceFlows,
     });
     this.deviceMatches = this.analysis.deviceMatches;
     for (const f of this.analysis.findings) {

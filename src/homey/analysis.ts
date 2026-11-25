@@ -133,6 +133,43 @@ export interface Sources {
   deviceMatches?: Record<string, string>;
   /** Homey device class of the metered devices, by id (ReferenceTracker.classes()). */
   classes?: Map<string, string>;
+  /** Devices an enabled flow already runs on the electricity price: the flow's name, by device id. */
+  priceFlows?: Map<string, string>;
+}
+
+/** The parts of a Homey flow (standard or advanced) read here. */
+export interface FlowLike {
+  name?: string;
+  enabled?: boolean;
+  trigger?: { id?: string };
+  conditions?: Array<{ id?: string }>;
+  actions?: Array<{ id?: string }>;
+  cards?: Record<string, { id?: string; type?: string }>;
+}
+
+/**
+ * Devices that an enabled flow acts on while a price card (trigger or condition) decides when:
+ * "turn the spa's heater on in the 6 cheapest hours". A shift finding for such a device is about
+ * what is left beyond that flow, not a new idea.
+ */
+export function flowsRunningOnPrice(flows: FlowLike[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of flows) {
+    if (f.enabled === false) continue;
+    const cards = f.cards
+      ? Object.values(f.cards).map(c => ({ id: c.id ?? '', type: c.type ?? '' }))
+      : [
+          ...(f.trigger ? [{ id: f.trigger.id ?? '', type: 'trigger' }] : []),
+          ...(f.conditions ?? []).map(c => ({ id: c.id ?? '', type: 'condition' })),
+          ...(f.actions ?? []).map(c => ({ id: c.id ?? '', type: 'action' })),
+        ];
+    if (!cards.some(c => c.type !== 'action' && /price/i.test(c.id))) continue;
+    for (const c of cards) {
+      const m = c.type === 'action' ? /^homey:device:([0-9a-f-]{36}):/.exec(c.id) : null;
+      if (m && !out.has(m[1])) out.set(m[1], f.name ?? 'a flow');
+    }
+  }
+  return out;
 }
 
 const HEAT_PUMP_NAME = /heat ?pump|värmepump|varmepump|ecodan|nibe|thermia/i;
@@ -333,10 +370,11 @@ export function deviceRunsOf(
   energyOn: (date: string) => Array<{ id: string; kWh: number }>,
   from: number,
   now: number,
-  timeZone: string
-): Array<{ id: string; name: string; runs: Activation[]; observedDays: number }> {
+  timeZone: string,
+  priceFlows?: Map<string, string>
+): Array<{ id: string; name: string; runs: Activation[]; observedDays: number; priceFlow?: string }> {
   const hourOf = (t: number) => new Date(t).toLocaleString('en-GB', { timeZone, hour: '2-digit', hour12: false });
-  const out: Array<{ id: string; name: string; runs: Activation[]; observedDays: number }> = [];
+  const out: Array<{ id: string; name: string; runs: Activation[]; observedDays: number; priceFlow?: string }> = [];
   const energy = new Map<string, Map<string, number>>();
   const energyOf = (date: string) => {
     let m = energy.get(date);
@@ -372,7 +410,7 @@ export function deviceRunsOf(
     }
     if (!acts.length) continue;
     const first = Math.min(...inWindow.map(i => i.start));
-    out.push({ id: r.id, name: r.name, runs: acts, observedDays: Math.max(1, (now - first) / 86_400_000) });
+    out.push({ id: r.id, name: r.name, runs: acts, observedDays: Math.max(1, (now - first) / 86_400_000), priceFlow: priceFlows?.get(r.id) });
   }
   return out;
 }
@@ -593,7 +631,7 @@ export function analyse(
     },
     deviceRuns:
       sources.metered && sources.classes
-        ? deviceRunsOf(refs, sources.classes, heatPumpDeviceIds, d => sources.metered!.energyOn(d), from, now, s.timeZone)
+        ? deviceRunsOf(refs, sources.classes, heatPumpDeviceIds, d => sources.metered!.energyOn(d), from, now, s.timeZone, sources.priceFlows)
         : undefined,
   });
 

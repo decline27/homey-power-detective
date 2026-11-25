@@ -59,7 +59,7 @@ export interface FindingInputs {
    * shift finding comes from these, not from the runs the house meter happened to pair: a device
    * subtracted live leaves no runs there, and its own meter is exact.
    */
-  deviceRuns?: Array<{ id: string; name: string; runs: Activation[]; observedDays: number }>;
+  deviceRuns?: Array<{ id: string; name: string; runs: Activation[]; observedDays: number; priceFlow?: string }>;
 }
 
 export const FINDING_LIMITS = {
@@ -174,7 +174,15 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
   if (inp.price) {
     const price = inp.price;
     // Per day observed, as a load's kWh/day: a load seen on 3 days of 14 does not run daily.
-    const shiftable = (id: string, name: string, runs: Activation[], observedDays: number, confidence: Finding['confidence'], loadId?: string) => {
+    const shiftable = (
+      id: string,
+      name: string,
+      runs: Activation[],
+      observedDays: number,
+      confidence: Finding['confidence'],
+      loadId?: string,
+      priceFlow?: string
+    ) => {
       const shift = shiftSaving(runs, price, inp.timeZone);
       if (!shift || shift.runs < 3) return;
       const kWhRun = shift.kWh / shift.runs;
@@ -184,10 +192,14 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
         id,
         kind: 'shiftable',
         loadId,
-        title: `${name}: ${money(perMonth, inp.currency)}/month cheaper at the day's cheapest hours`,
+        title: priceFlow
+          ? `${name}: ${money(perMonth, inp.currency)}/month more at the day's very cheapest hours`
+          : `${name}: ${money(perMonth, inp.currency)}/month cheaper at the day's cheapest hours`,
         detail:
+          (priceFlow ? `The flow "${priceFlow}" already runs it on the price. ` : '') +
           `${shift.runs} runs of about ${round(kWhRun, 1)} kWh cost ${money(shift.actual, inp.currency)}; started in the cheapest hours of ` +
-          `the same days they would have cost ${money(shift.actual - shift.saving, inp.currency)}.`,
+          `the same days they would have cost ${money(shift.actual - shift.saving, inp.currency)}.` +
+          (priceFlow ? ' That is what a tighter window in the flow could still save, at most.' : ''),
         kWhPerMonth: (shift.kWh / observedDays) * 30,
         costPerMonth: (shift.actual / observedDays) * 30,
         savingPerMonth: perMonth,
@@ -213,7 +225,7 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
       shiftable(`shiftable:${c.id}`, name, own, observedDays, inp.names[c.id] ? 'high' : 'medium', c.id);
     }
     if (inp.deviceRuns) {
-      for (const d of inp.deviceRuns) shiftable(`shiftable:device:${d.id}`, d.name, d.runs, d.observedDays, 'high');
+      for (const d of inp.deviceRuns) shiftable(`shiftable:device:${d.id}`, d.name, d.runs, d.observedDays, d.priceFlow ? 'medium' : 'high', undefined, d.priceFlow);
     } else {
       for (const [id, d] of devices) {
         shiftable(`shiftable:device:${id}`, d.name, d.runs.sort((x, y) => x.start - y.start), d.observedDays, 'high');

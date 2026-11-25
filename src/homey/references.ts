@@ -8,8 +8,16 @@ import { Interval } from '../engine/score';
 import { DeviceLike } from './meter';
 
 export const REFERENCES = {
-  /** A device counts as on above this (W). */
+  /** A device counts as on above this (W)... */
   ON_W: 50,
+  /**
+   * ...or this share of its peak, up to ON_CAP_W: a spa's 95 W circulation pump runs for hours
+   * around its heats, and "on" should be the heater and jets, not that.
+   */
+  ON_PEAK_SHARE: 0.2,
+  ON_CAP_W: 400,
+  /** The peak fades to half over this long, so a new device or a lowered setting is followed (ms). */
+  PEAK_HALF_LIFE_MS: 14 * 86_400_000,
   /** Intervals kept per device, and days. */
   MAX_INTERVALS: 3000,
   RETENTION_DAYS: 21,
@@ -22,6 +30,8 @@ interface Track {
   heatPump: boolean;
   /** Homey device class ("evcharger", "heater", "thermostat"...). */
   cls?: string;
+  /** Highest power seen, fading (W). */
+  peakW?: number;
   intervals: Interval[];
   open: Interval | null;
   lastSeen: number;
@@ -45,6 +55,11 @@ export function isLoadDevice(d: DeviceLike, exclude: Set<string>): boolean {
   return true;
 }
 
+/** The power above which a device with this peak counts as on (W). */
+export function onThresholdW(peakW: number | undefined): number {
+  return Math.min(REFERENCES.ON_CAP_W, Math.max(REFERENCES.ON_W, REFERENCES.ON_PEAK_SHARE * (peakW ?? 0)));
+}
+
 export class ReferenceTracker {
   private tracks = new Map<string, Track>();
 
@@ -62,7 +77,9 @@ export class ReferenceTracker {
       tr.heatPump = d.class === 'heatpump';
       tr.cls = d.class ?? tr.cls;
       if (tr.open && now - tr.lastSeen > REFERENCES.MAX_SILENCE_MS) this.close(tr, tr.lastSeen);
-      const on = power > REFERENCES.ON_W;
+      const fade = 0.5 ** (Math.max(0, now - tr.lastSeen) / REFERENCES.PEAK_HALF_LIFE_MS);
+      tr.peakW = Math.max(power, (tr.peakW ?? 0) * fade);
+      const on = power > onThresholdW(tr.peakW);
       if (on && !tr.open) tr.open = { start: now, end: now };
       if (!on && tr.open) this.close(tr, now);
       if (tr.open) tr.open.end = now;
@@ -116,6 +133,7 @@ export class ReferenceTracker {
         name: String(tr.name ?? id),
         heatPump: tr.heatPump === true,
         cls: typeof tr.cls === 'string' ? tr.cls : undefined,
+        peakW: Number.isFinite(tr.peakW) ? tr.peakW : undefined,
         intervals: tr.intervals.filter(i => Number.isFinite(i?.start) && Number.isFinite(i?.end)),
         open: tr.open && Number.isFinite(tr.open.start) ? { start: tr.open.start, end: tr.open.end } : null,
         lastSeen: Number(tr.lastSeen) || 0,

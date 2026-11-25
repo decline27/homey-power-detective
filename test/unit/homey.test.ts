@@ -1,9 +1,9 @@
-import { LoadView, analyse, deviceRunsOf, displayName, floorW, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
+import { LoadView, analyse, deviceRunsOf, displayName, floorW, flowsRunningOnPrice, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
 import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
 import { PriceBook } from '../../src/homey/prices';
-import { ReferenceTracker } from '../../src/homey/references';
+import { ReferenceTracker, onThresholdW } from '../../src/homey/references';
 import { PowerEngine } from '../../src/engine/engine';
 import { MIN, T0, every, synthHouse } from '../helpers/synth';
 
@@ -320,6 +320,36 @@ describe('analysis', () => {
     expect(ev.runs).toHaveLength(2); // the 1-minute blip is not a run...
     const kWh = ev.runs.reduce((s, a) => s + ((a.delta[0] + a.delta[1] + a.delta[2]) * (a.end - a.start)) / 3.6e9, 0);
     expect(kWh).toBeCloseTo((22 * 120) / 121, 1); // ...but its share of the day's energy stays with it
+  });
+
+  test('a device an enabled flow runs on the price is found; a flow without a price card, or disabled, is not', () => {
+    const spa = 'f1994ae9-0218-4fea-bbd4-d3743a02e5f2';
+    const ev = 'e4d39a34-6a63-4a31-a36a-c53de0224280';
+    const flows = [
+      {
+        name: 'Spa – vecka + pris',
+        enabled: true,
+        cards: {
+          a: { type: 'trigger', id: 'homey:device:a4fff00b-bc4f-4135-bf2c-3ef3ef1e3ffd:price_changed' },
+          b: { type: 'condition', id: 'homey:device:a4fff00b-bc4f-4135-bf2c-3ef3ef1e3ffd:cond_price_among_lowest_today' },
+          c: { type: 'action', id: `homey:device:${spa}:action_heater_mode_on_flow` },
+        },
+      },
+      { name: 'Charge at night', enabled: true, trigger: { id: 'homey:manager:cron:time_exactly' }, actions: [{ id: `homey:device:${ev}:start_charging` }] },
+      { name: 'Old', enabled: false, trigger: { id: 'homey:device:x:price_changed' }, actions: [{ id: `homey:device:${ev}:start_charging` }] },
+    ];
+    expect([...flowsRunningOnPrice(flows)]).toEqual([[spa, 'Spa – vecka + pris']]);
+  });
+
+  test("a device's on-line: a fifth of its peak, at most 400 W (a spa's circulation pump is not on)", () => {
+    expect(onThresholdW(undefined)).toBe(50);
+    expect(onThresholdW(1360)).toBe(272);
+    expect(onThresholdW(4665)).toBe(400);
+    const tr = new ReferenceTracker();
+    const dev = (w: number) => [{ id: 'spa', name: 'BWA Spa', class: 'thermostat', capabilities: ['measure_power'], capabilitiesObj: { measure_power: { value: w } } }];
+    const t0 = Date.UTC(2026, 10, 2);
+    [2795, 2795, 95, 95, 95, 2795, 15].forEach((w, i) => tr.update(t0 + i * MIN, dev(w) as any, new Set()));
+    expect(tr.references()[0].intervals.map(i => (i.end - i.start) / MIN)).toEqual([2, 1]);
   });
 
   test('the base load is the lowest complete day: one cold day with the heat pump on all day does not set it', () => {
