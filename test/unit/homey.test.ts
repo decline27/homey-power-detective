@@ -314,6 +314,8 @@ describe('analysis', () => {
     const energy = (date: string) => (date === '2026-11-02' ? [{ id: 'ev', kWh: 22 }, { id: 'spa', kWh: 6 }] : [{ id: 'spa', kWh: 1.5 }]);
     const out = deviceRunsOf(refs, classes, ['hp'], energy, day0, day0 + 3 * 24 * H, 'Europe/Stockholm');
     expect(out.map(d => d.id)).toEqual(['ev', 'spa']);
+    // A device whose class is not known yet (just restarted) gets no runs.
+    expect(deviceRunsOf(refs, new Map([['ev', 'evcharger']]), ['hp'], energy, day0, day0 + 3 * 24 * H, 'Europe/Stockholm').map(d => d.id)).toEqual(['ev']);
     const ev = out[0];
     expect(ev.runs).toHaveLength(2); // the 1-minute blip is not a run...
     const kWh = ev.runs.reduce((s, a) => s + ((a.delta[0] + a.delta[1] + a.delta[2]) * (a.end - a.start)) / 3.6e9, 0);

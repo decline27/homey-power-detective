@@ -344,8 +344,9 @@ export function deviceRunsOf(
     return m;
   };
   for (const r of refs) {
-    const cls = classes.get(r.id) ?? '';
-    if (heatPumpIds.includes(r.id) || DEVICE_SHIFT.NEVER.includes(cls)) continue;
+    // Not until its class is known: right after a restart a room heater would look shiftable.
+    const cls = classes.get(r.id);
+    if (cls === undefined || heatPumpIds.includes(r.id) || DEVICE_SHIFT.NEVER.includes(cls)) continue;
     const inWindow = r.intervals.filter(i => i.end > from && i.start < now).map(i => ({ start: Math.max(i.start, from), end: Math.min(i.end, now) }));
     const runs = inWindow.filter(i => i.end - i.start >= DEVICE_SHIFT.MIN_RUN_MS);
     if (!runs.length) continue;
