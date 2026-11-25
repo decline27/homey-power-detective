@@ -293,6 +293,22 @@ export function meteredRunOf(
   };
 }
 
+/**
+ * The heat pump's loads: its device is the load's main one (a load named "Easee ladder /
+ * Heatpump" is mostly the charger), or the user or a test named it so.
+ */
+export function heatPumpLoads(loads: Array<Pick<LoadView, 'id' | 'name' | 'source' | 'deviceId'>>, heatPumpDeviceIds: string[]): string[] {
+  return loads
+    .filter(l => (l.deviceId && heatPumpDeviceIds.includes(l.deviceId)) || (l.source !== 'device' && l.name && HEAT_PUMP_NAME.test(l.name)))
+    .map(l => l.id);
+}
+
+/** The lowest always-on power of the given days (W), or null when none has one. */
+export function floorW(days: Array<Pick<DayAccount, 'alwaysOnW'>>): number | null {
+  const w = days.map(d => d.alwaysOnW).filter((x): x is number => x !== null);
+  return w.length ? Math.min(...w) : null;
+}
+
 export function analyse(
   engine: PowerEngine,
   refs: Reference[],
@@ -438,11 +454,7 @@ export function analyse(
   };
 
   const names = Object.fromEntries(loads.filter(l => l.name).map(l => [l.id, l.name as string]));
-  // The heat pump's loads: its device is the load's main one (a load named "Easee ladder /
-  // Heatpump" is mostly the charger), or the user or a test named it so.
-  const heatPumpLoadIds = loads
-    .filter(l => (l.deviceId && heatPumpDeviceIds.includes(l.deviceId)) || (l.source !== 'device' && l.name && HEAT_PUMP_NAME.test(l.name)))
-    .map(l => l.id);
+  const heatPumpLoadIds = heatPumpLoads(loads, heatPumpDeviceIds);
 
   const allDays = engine.days().map(d => buildDayLedger(d, clusters, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
   const days = allDays.slice(-ANALYSIS.LEDGER_DAYS);
@@ -488,8 +500,7 @@ export function analyse(
   // took its share. "Never draws less" is the week's floor: a cold day with the heat pump on all
   // day (not subtracted live, MELCloud is minutes late) raises that day's floor, not the house's.
   const fullAccounts = accounts.filter(d => d.coveredHours >= 20);
-  const floors = fullAccounts.map(d => d.alwaysOnW).filter((w): w is number => w !== null);
-  const baseloadW = floors.length ? Math.min(...floors) : accounts[accounts.length - 1]?.alwaysOnW ?? null;
+  const baseloadW = fullAccounts.length ? floorW(fullAccounts) : accounts[accounts.length - 1]?.alwaysOnW ?? null;
 
   const loadDevice = new Map(loads.filter(l => l.deviceId).map(l => [l.id, l.deviceId as string]));
   const findings = buildFindings({

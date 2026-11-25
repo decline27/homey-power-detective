@@ -1,4 +1,4 @@
-import { LoadView, analyse, displayName, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
+import { LoadView, analyse, displayName, floorW, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
 import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
@@ -271,6 +271,37 @@ describe('analysis', () => {
     expect(runOf(run(T0 + 500 * MIN, 221, v(700, 660, 650)))).toBeNull(); // the heat pump stopped half-way
     expect(runOf(run(T0 + 120 * MIN, 60, v(0, 2600, 0)))).toBeNull(); // the spa is not a heat pump: switch-on only
     expect(meteredRunOf(refs, shares)(run(T0 + 120 * MIN, 221, v(700, 660, 650)))).toBeNull(); // no heat pump named
+  });
+
+  test('a charger switching on while the heat pump runs is the charger, not the heat pump', () => {
+    const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
+    const shares = new Map([['hp', v(0.33, 0.33, 0.34)], ['ev', v(0.34, 0.33, 0.33)]]);
+    const refs = [
+      { id: 'hp', name: 'Heatpump', intervals: [{ start: T0, end: T0 + 600 * MIN }] },
+      { id: 'ev', name: 'Easee ladder', intervals: [{ start: T0 + 120 * MIN, end: T0 + 180 * MIN }] },
+    ];
+    const run = { start: T0 + 121 * MIN, end: T0 + 177 * MIN, delta: v(3500, 3500, 3450) };
+    expect(meteredRunOf(refs, shares, ['hp'])(run)).toBe('ev');
+  });
+
+  test('a load is the heat pump when its main device is; a combined device name is not enough', () => {
+    const l = (id: string, name: string | null, source: LoadView['source'], deviceId: string | null) => ({ id, name, source, deviceId });
+    expect(
+      heatPumpLoads(
+        [
+          l('a', 'Heatpump / Easee ladder', 'device', 'hp'),
+          l('b', 'Easee ladder / Heatpump', 'device', 'ev'),
+          l('c', 'Värmepump', 'user', null),
+          l('d', null, null, null),
+        ],
+        ['hp']
+      )
+    ).toEqual(['a', 'c']);
+  });
+
+  test('the base load is the lowest complete day: one cold day with the heat pump on all day does not set it', () => {
+    expect(floorW([{ alwaysOnW: 438 }, { alwaysOnW: 1463 }, { alwaysOnW: 813 }])).toBe(438);
+    expect(floorW([{ alwaysOnW: null }])).toBeNull();
   });
 
   test('an open start whose metered devices all said off since is stopped; others are left', () => {
