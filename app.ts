@@ -12,9 +12,9 @@ import Homey from 'homey';
 import * as fs from 'fs';
 import { classify } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
-import { Activation, StepEvent, activationKWh, activationW } from './src/engine/types';
+import { Activation, StepEvent, activationKWh, activationW, Vec3 } from './src/engine/types';
 import { DayMeter, DayRecord } from './src/engine/day-meter';
-import { Analysis, FlowLike, UserSettings, analyse, displayName, flowsRunningOnPrice, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
+import { Analysis, FlowLike, OPEN_STARTS, UserSettings, analyse, displayName, flowsRunningOnPrice, startsThatDoNotFit, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
 import { MeteredDevices } from './src/homey/metered';
 import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
@@ -223,6 +223,20 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     }
   }
 
+  /** Since when the open starts have added up to more than a phase draws (see startsThatDoNotFit). */
+  private overflowSince: number | null = null;
+  private retireImpossibleStarts(phaseW: Vec3, t: number): void {
+    const excess = startsThatDoNotFit(this.engine.running(), phaseW, t);
+    if (!excess.length) {
+      this.overflowSince = null;
+      return;
+    }
+    this.overflowSince ??= t;
+    if (t - this.overflowSince < OPEN_STARTS.HOLD_MS) return;
+    this.engine.dropStarts(excess);
+    this.overflowSince = null;
+  }
+
   private sampleOnce(): void {
     const now = Date.now();
     const reading = readingFrom(this.latest, now);
@@ -239,7 +253,9 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     // The house meter counts everything; detection sees what the live-metered devices leave.
     this.house.push(reading.t, Number.isFinite(reading.total) ? (reading.total as number) : reading.w[0] + reading.w[1] + reading.w[2]);
     this.metered.observe(reading);
-    const { steps, activations } = this.engine.push(this.metered.residual(reading));
+    const residual = this.metered.residual(reading);
+    const { steps, activations } = this.engine.push(residual);
+    this.retireImpossibleStarts(residual.w, reading.t);
     steps.filter(s => s.delta[0] + s.delta[1] + s.delta[2] > 0).forEach(s => this.onStart(s));
     activations.forEach(a => this.onStop(a));
   }

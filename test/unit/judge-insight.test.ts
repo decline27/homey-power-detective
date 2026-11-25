@@ -392,4 +392,19 @@ describe('summary', () => {
     ]);
     expect(templateSummary({ ...input, ...f })).toContain('BWA Spa 6 kWh/day (own meter)');
   });
+
+test('a device a flow already runs on the price: its tip names the flow and is what is left', () => {
+  const H = 3_600_000;
+  const day = Date.UTC(2026, 10, 1, 23);
+  const price = (h: number) => (((h - day) / H) % 24 < 4 ? 1 : 4);
+  const runs = [0, 1, 2].map(d => ({ start: day + d * 24 * H + 12 * H, end: day + d * 24 * H + 14 * H, delta: [2500, 0, 0] as [number, number, number] }));
+  const f = buildFindings({
+    loads: [], names: {}, heatPumpLoadIds: [], baseloadW: null, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, price, timeZone: 'UTC',
+    deviceRuns: [{ id: 'spa', name: 'BWA Spa', runs, observedDays: 3, priceFlow: 'Spa – vecka + pris' }],
+  });
+  expect(f).toHaveLength(1);
+  expect(f[0]).toMatchObject({ priceFlow: 'Spa – vecka + pris', confidence: 'medium' });
+  expect(f[0].title).toMatch(/^BWA Spa: \d+ SEK\/month more at the day's very cheapest hours$/);
+  expect(f[0].detail).toMatch(/^The flow "Spa – vecka \+ pris" already runs it on the price\./);
+});
 });

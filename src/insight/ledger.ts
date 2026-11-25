@@ -9,7 +9,7 @@ import { Activation, LoadCluster, activationW } from '../engine/types';
 import { hourStart } from './time';
 
 /** Off-time a day needs before its always-on comes from it (ms). */
-export const FLOOR_MIN_COVER_MS = 3_600_000;
+export const FLOOR_MIN_COVER_MS = 3 * 3_600_000;
 
 /** Price per kWh for the hour starting at `hour` (ms), or null when unknown. */
 export type PriceAt = (hour: number) => number | null;

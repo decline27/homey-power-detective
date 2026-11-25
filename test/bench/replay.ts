@@ -26,6 +26,7 @@ import { Interval, Score, intervalsFromPower } from '../../src/engine/score';
 import { Activation, LoadCluster, activationKWh } from '../../src/engine/types';
 import { Latest, readingFrom } from '../../src/homey/meter';
 import { buildDayLedger } from '../../src/insight/ledger';
+import { OPEN_STARTS, startsThatDoNotFit } from '../../src/homey/analysis';
 
 const SAMPLE_MS = 10_000;
 const CAP: Record<string, string> = {
@@ -98,6 +99,8 @@ let k = 0;
 let houseKWh = 0;
 let lastTotal: { t: number; w: number } | null = null;
 const openCounts: number[] = [];
+let overflowSince: number | null = null;
+const retire = !args.includes('--keep-open');
 for (let tick = Math.ceil(from / SAMPLE_MS) * SAMPLE_MS; tick <= to; tick += SAMPLE_MS) {
   for (; k < meterEvents.length && meterEvents[k].t <= tick; k++) {
     latest.set(CAP[meterEvents[k].key], { value: meterEvents[k].v, at: meterEvents[k].t });
@@ -105,6 +108,13 @@ for (let tick = Math.ceil(from / SAMPLE_MS) * SAMPLE_MS; tick <= to; tick += SAM
   const r = readingFrom(latest, tick);
   if (!r) continue;
   engine.push(r);
+  // As the app does (app.ts retireImpossibleStarts): open starts that cannot all fit the phases.
+  const excess = startsThatDoNotFit(engine.running(), r.w, tick);
+  if (!excess.length) overflowSince = null;
+  else if ((overflowSince ??= tick) <= tick - OPEN_STARTS.HOLD_MS && retire) {
+    engine.dropStarts(excess);
+    overflowSince = null;
+  }
   const total = r.total as number;
   if (lastTotal && tick - lastTotal.t <= 120_000) houseKWh += (lastTotal.w * (tick - lastTotal.t)) / 3.6e9;
   lastTotal = { t: tick, w: total };

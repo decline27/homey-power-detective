@@ -306,6 +306,37 @@ function onShare(intervals: Interval[], start: number, end: number): number {
   return Math.min(1, on / (end - start));
 }
 
+export const OPEN_STARTS = {
+  /** Open starts may exceed a phase's power by this much (W): steps are sized a little loosely... */
+  SLACK_W: 150,
+  /** ...and for this long, before the oldest is taken as stopped unseen (ms)... */
+  HOLD_MS: 10 * 60_000,
+  /**
+   * ...and only starts at least this old (ms): a charger or heat pump turning its power down is
+   * still running (on the raw record, retiring those cut the charger's energy from 97 % to 20 %).
+   */
+  MIN_AGE_MS: 3 * 3_600_000,
+};
+
+/**
+ * Open starts that cannot all still be running: on some phase they add up to more than the phase
+ * draws (plus SLACK_W). The oldest on that phase go first until the rest fit. A load that ramped
+ * down without a step, or a stop lost in simultaneous switching, otherwise stays "on now" for a day.
+ */
+export function startsThatDoNotFit(open: StepEvent[], phaseW: Vec3, now: number, slackW = OPEN_STARTS.SLACK_W): StepEvent[] {
+  const out: StepEvent[] = [];
+  const left = [...open].sort((a, b) => a.t - b.t);
+  for (let k = 0; k < 3; k++) {
+    const sum = () => left.reduce((x, o) => x + Math.max(0, o.delta[k]), 0);
+    while (sum() > phaseW[k] + slackW) {
+      const i = left.findIndex(o => o.delta[k] > 0 && now - o.t >= OPEN_STARTS.MIN_AGE_MS);
+      if (i < 0) break;
+      out.push(...left.splice(i, 1));
+    }
+  }
+  return out;
+}
+
 /**
  * The metered device a run is, when one switched on with it on the same phases, or else a heat
  * pump that was on through it (HEAT_PUMP_COVER_SHARE). Its own meter
@@ -358,10 +389,12 @@ export const DEVICE_SHIFT = {
 };
 
 /**
- * Metered devices' runs from their own readings, for shift findings: on-intervals of at least
+ * Metered devices' runs from their own readings, for shift findings (`from`: since when they have
+ * been watched, which is what a month is scaled from): on-intervals of at least
  * MIN_RUN_MS, each with the device's own energy of that day spread over its on-time that day.
  * Heat pumps and room heaters are left out, and so is a thermostat with no schedule (floor heating
- * starts at every hour; a spa's filter cycle starts at the same time each day).
+ * starts at every hour; a spa's filter cycle starts at the same time each day) unless a price flow
+ * already runs it.
  */
 export function deviceRunsOf(
   refs: Reference[],
@@ -388,7 +421,8 @@ export function deviceRunsOf(
     const inWindow = r.intervals.filter(i => i.end > from && i.start < now).map(i => ({ start: Math.max(i.start, from), end: Math.min(i.end, now) }));
     const runs = inWindow.filter(i => i.end - i.start >= DEVICE_SHIFT.MIN_RUN_MS);
     if (!runs.length) continue;
-    if (cls === 'thermostat') {
+    // A thermostat a price flow already runs is shiftable by the user's own choice.
+    if (cls === 'thermostat' && !priceFlows?.has(r.id)) {
       const hours = new Map<string, number>();
       runs.forEach(i => hours.set(hourOf(i.start), (hours.get(hourOf(i.start)) ?? 0) + 1));
       if (Math.max(...hours.values()) / runs.length < DEVICE_SHIFT.SCHEDULED_SHARE) continue;
@@ -409,8 +443,9 @@ export function deviceRunsOf(
       acts.push({ start: i.start, end: i.end, delta: [w, 0, 0] });
     }
     if (!acts.length) continue;
-    const first = Math.min(...inWindow.map(i => i.start));
-    out.push({ id: r.id, name: r.name, runs: acts, observedDays: Math.max(1, (now - first) / 86_400_000), priceFlow: priceFlows?.get(r.id) });
+    // Per day watched, not per day since its first run: three charges in the last three days of
+    // a fortnight are not a daily habit.
+    out.push({ id: r.id, name: r.name, runs: acts, observedDays: Math.max(1, (now - from) / 86_400_000), priceFlow: priceFlows?.get(r.id) });
   }
   return out;
 }
@@ -631,7 +666,7 @@ export function analyse(
     },
     deviceRuns:
       sources.metered && sources.classes
-        ? deviceRunsOf(refs, sources.classes, heatPumpDeviceIds, d => sources.metered!.energyOn(d), from, now, s.timeZone, sources.priceFlows)
+        ? deviceRunsOf(refs, sources.classes, heatPumpDeviceIds, d => sources.metered!.energyOn(d), Math.max(from, engine.observedFrom() ?? from), now, s.timeZone, sources.priceFlows)
         : undefined,
   });
 

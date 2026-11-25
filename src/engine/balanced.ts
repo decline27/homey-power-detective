@@ -34,6 +34,12 @@ export const BALANCED = {
   BASE_DAYS: 7,
   /** ...a day counted once it has this much data (ms). */
   BASE_MIN_COVER_MS: 6 * 3_600_000,
+  /**
+   * A phase below this (W) is a live-subtracted device taken out too generously (the spa's
+   * estimated 2795 W against 2690 W on L2), not the house: no house draws this little on a phase.
+   * Such readings do not teach the base; on the Homey's record they pulled it to 5 W.
+   */
+  MIN_PHASE_W: 50,
   /** Histogram of the lowest-phase power. */
   BIN_W: 10,
   BINS: 400, // 0..4 kW per phase
@@ -119,14 +125,16 @@ export class BalancedTracker {
     const est = this.on ? Math.min(raw, total) : 0;
     this.last = { t, est };
     // NaN breaks the off-time meter's span: on-time is not counted in it.
-    this.rest.push(t, this.on || this.pending !== null ? NaN : total);
-    this.net.push(t, Math.max(0, total - est));
+    // Nor do they show the house's always-on: such a reading is left out of both day meters.
+    const overTaken = low < this.cfg.MIN_PHASE_W;
+    this.rest.push(t, this.on || this.pending !== null || overTaken ? NaN : total);
+    this.net.push(t, overTaken ? NaN : Math.max(0, total - est));
     if (!prev || t <= prev.t || t - prev.t > this.cfg.MAX_GAP_MS) return;
     const dt = t - prev.t;
     const day = this.day(localDate(prev.t, this.timeZone));
     day.kWh += (prev.est * dt) / 3.6e9;
     day.coveredMs += dt;
-    day.hist[Math.min(this.cfg.BINS - 1, Math.floor(low / this.cfg.BIN_W))] += dt / 1000;
+    if (low >= this.cfg.MIN_PHASE_W) day.hist[Math.min(this.cfg.BINS - 1, Math.floor(low / this.cfg.BIN_W))] += dt / 1000;
     if (this.on) {
       this.on.wSum += prev.est * dt;
       this.on.ms += dt;

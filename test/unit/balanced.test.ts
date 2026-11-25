@@ -48,6 +48,18 @@ describe('balanced 3-phase tracker', () => {
     expect(p5).toBeLessThan(700); // the house's 610 W, not 1810 W
   });
 
+  test('a phase a live device over-subtracts to near zero does not teach the base', () => {
+    const b = new BalancedTracker(tz);
+    feed(b, T0, 600, 0);
+    feed(b, T0 + 600 * MIN, 840, 1200);
+    // Next day: an hour with L2 at 0 (a spa's estimate above its real draw), the rest normal.
+    const d2 = T0 + 1440 * MIN;
+    for (let t = d2; t < d2 + 60 * MIN; t += 10_000) b.push(t, [200, 0, 250], 450);
+    feed(b, d2 + 60 * MIN, 1380, 0);
+    // Day 3 learns from days 1-2: still the house's 160 W on its lowest phase, not 0.
+    expect(b.baseW(d2 + 1440 * MIN + 60 * MIN)).toBeGreaterThan(140);
+  });
+
   test('survives a snapshot', () => {
     const b = new BalancedTracker(tz);
     feed(b, T0, 600, 0);

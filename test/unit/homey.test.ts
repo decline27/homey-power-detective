@@ -1,4 +1,4 @@
-import { LoadView, analyse, deviceRunsOf, displayName, floorW, flowsRunningOnPrice, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
+import { LoadView, analyse, startsThatDoNotFit, deviceRunsOf, displayName, floorW, flowsRunningOnPrice, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
 import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
@@ -314,6 +314,12 @@ describe('analysis', () => {
     const energy = (date: string) => (date === '2026-11-02' ? [{ id: 'ev', kWh: 22 }, { id: 'spa', kWh: 6 }] : [{ id: 'spa', kWh: 1.5 }]);
     const out = deviceRunsOf(refs, classes, ['hp'], energy, day0, day0 + 3 * 24 * H, 'Europe/Stockholm');
     expect(out.map(d => d.id)).toEqual(['ev', 'spa']);
+    // A month is scaled from the days watched, not from the first run: the charger ran on day 1 of 3.
+    expect(out[0].observedDays).toBeCloseTo(3, 5);
+    // A thermostat with no schedule qualifies when a price flow already runs it.
+    const withFloor = (date: string) => [...energy(date), { id: 'floor', kWh: 8 }];
+    expect(deviceRunsOf(refs, classes, ['hp'], withFloor, day0, day0 + 3 * 24 * H, 'Europe/Stockholm').map(d => d.id)).not.toContain('floor');
+    expect(deviceRunsOf(refs, classes, ['hp'], withFloor, day0, day0 + 3 * 24 * H, 'Europe/Stockholm', new Map([['floor', 'Köksgolv']])).map(d => d.id)).toContain('floor');
     // A device whose class is not known yet (just restarted) gets no runs.
     expect(deviceRunsOf(refs, new Map([['ev', 'evcharger']]), ['hp'], energy, day0, day0 + 3 * 24 * H, 'Europe/Stockholm').map(d => d.id)).toEqual(['ev']);
     const ev = out[0];
@@ -350,6 +356,20 @@ describe('analysis', () => {
     const t0 = Date.UTC(2026, 10, 2);
     [2795, 2795, 95, 95, 95, 2795, 15].forEach((w, i) => tr.update(t0 + i * MIN, dev(w) as any, new Set()));
     expect(tr.references()[0].intervals.map(i => (i.end - i.start) / MIN)).toEqual([2, 1]);
+  });
+
+  test('open starts that add up to more than a phase draws: the oldest, if hours old, are retired', () => {
+    const H = 3_600_000;
+    const now = T0 + 30 * H;
+    const st = (hAgo: number, d: [number, number, number]) => ({ t: now - hAgo * H, settledAt: now - hAgo * H, delta: d });
+    const stale = st(20, [330, 0, 0]);
+    const old2 = st(10, [340, 0, 0]);
+    const kettle = st(0.01, [2000, 0, 0]);
+    // L1 draws 2.5 kW: the kettle and one of the two old ones fit, not both.
+    expect(startsThatDoNotFit([kettle, old2, stale], [2500, 300, 300], now)).toEqual([stale]);
+    // A charger turned down to 2 kW a phase an hour in is still running: too young to retire.
+    const ev = st(1, [3500, 3500, 3500]);
+    expect(startsThatDoNotFit([ev], [2000, 2000, 2000], now)).toEqual([]);
   });
 
   test('the base load is the lowest complete day: one cold day with the heat pump on all day does not set it', () => {
