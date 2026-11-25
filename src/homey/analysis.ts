@@ -10,7 +10,7 @@ import { CLUSTERING } from '../engine/config';
 import { Activation, LoadCluster, StepEvent, Vec3, activationW } from '../engine/types';
 import { Experiment, ExperimentResult, evaluateExperiment } from '../insight/experiments';
 import { Finding, buildFindings } from '../insight/findings';
-import { DayRecord } from '../engine/day-meter';
+import { DayRecord, localDate } from '../engine/day-meter';
 import { AccountInput, DayAccount, buildAccount } from '../insight/account';
 import { Session, inRhythmSlot, kindLabel, sessionsOf } from '../insight/appliances';
 import { DayLedger, activationEnergy, buildDayLedger } from '../insight/ledger';
@@ -131,6 +131,8 @@ export interface Sources {
   temps?: TemperatureBook;
   /** The previous analysis's `deviceMatches`. */
   deviceMatches?: Record<string, string>;
+  /** Homey device class of the metered devices, by id (ReferenceTracker.classes()). */
+  classes?: Map<string, string>;
 }
 
 const HEAT_PUMP_NAME = /heat ?pump|värmepump|varmepump|ecodan|nibe|thermia/i;
@@ -307,6 +309,71 @@ export function heatPumpLoads(loads: Array<Pick<LoadView, 'id' | 'name' | 'sourc
 export function floorW(days: Array<Pick<DayAccount, 'alwaysOnW'>>): number | null {
   const w = days.map(d => d.alwaysOnW).filter((x): x is number => x !== null);
   return w.length ? Math.min(...w) : null;
+}
+
+export const DEVICE_SHIFT = {
+  /** A device's own run shorter than this is a blip, not a run (ms). */
+  MIN_RUN_MS: 5 * 60_000,
+  /** Never shifted: heating that answers the room or the house. */
+  NEVER: ['heatpump', 'heater', 'radiator'],
+  /** A thermostat is shifted only when this share of its starts fall in one hour of the day (a schedule). */
+  SCHEDULED_SHARE: 0.25,
+};
+
+/**
+ * Metered devices' runs from their own readings, for shift findings: on-intervals of at least
+ * MIN_RUN_MS, each with the device's own energy of that day spread over its on-time that day.
+ * Heat pumps and room heaters are left out, and so is a thermostat with no schedule (floor heating
+ * starts at every hour; a spa's filter cycle starts at the same time each day).
+ */
+export function deviceRunsOf(
+  refs: Reference[],
+  classes: Map<string, string>,
+  heatPumpIds: string[],
+  energyOn: (date: string) => Array<{ id: string; kWh: number }>,
+  from: number,
+  now: number,
+  timeZone: string
+): Array<{ id: string; name: string; runs: Activation[]; observedDays: number }> {
+  const hourOf = (t: number) => new Date(t).toLocaleString('en-GB', { timeZone, hour: '2-digit', hour12: false });
+  const out: Array<{ id: string; name: string; runs: Activation[]; observedDays: number }> = [];
+  const energy = new Map<string, Map<string, number>>();
+  const energyOf = (date: string) => {
+    let m = energy.get(date);
+    if (!m) energy.set(date, (m = new Map(energyOn(date).map(x => [x.id, x.kWh]))));
+    return m;
+  };
+  for (const r of refs) {
+    const cls = classes.get(r.id) ?? '';
+    if (heatPumpIds.includes(r.id) || DEVICE_SHIFT.NEVER.includes(cls)) continue;
+    const inWindow = r.intervals.filter(i => i.end > from && i.start < now).map(i => ({ start: Math.max(i.start, from), end: Math.min(i.end, now) }));
+    const runs = inWindow.filter(i => i.end - i.start >= DEVICE_SHIFT.MIN_RUN_MS);
+    if (!runs.length) continue;
+    if (cls === 'thermostat') {
+      const hours = new Map<string, number>();
+      runs.forEach(i => hours.set(hourOf(i.start), (hours.get(hourOf(i.start)) ?? 0) + 1));
+      if (Math.max(...hours.values()) / runs.length < DEVICE_SHIFT.SCHEDULED_SHARE) continue;
+    }
+    // On-time per day (all on-intervals, blips too: the day's energy covers them).
+    const onMs = new Map<string, number>();
+    inWindow.forEach(i => {
+      const d = localDate(i.start, timeZone);
+      onMs.set(d, (onMs.get(d) ?? 0) + (i.end - i.start));
+    });
+    const acts: Activation[] = [];
+    for (const i of runs) {
+      const date = localDate(i.start, timeZone);
+      const kWh = energyOf(date).get(r.id) ?? 0;
+      const ms = onMs.get(date) ?? 0;
+      if (kWh <= 0 || ms <= 0) continue;
+      const w = (kWh * 3.6e9) / ms;
+      acts.push({ start: i.start, end: i.end, delta: [w, 0, 0] });
+    }
+    if (!acts.length) continue;
+    const first = Math.min(...inWindow.map(i => i.start));
+    out.push({ id: r.id, name: r.name, runs: acts, observedDays: Math.max(1, (now - first) / 86_400_000) });
+  }
+  return out;
 }
 
 export function analyse(
@@ -523,6 +590,10 @@ export function analyse(
       const id = meteredRun(a) ?? loadDevice.get(loadId) ?? null;
       return id ? { id, name: refName.get(id) ?? id, heatPump: heatPumpDeviceIds.includes(id) } : null;
     },
+    deviceRuns:
+      sources.metered && sources.classes
+        ? deviceRunsOf(refs, sources.classes, heatPumpDeviceIds, d => sources.metered!.energyOn(d), from, now, s.timeZone)
+        : undefined,
   });
 
   const observedHours = engine.observedFrom() === null ? 0 : (now - (engine.observedFrom() as number)) / 3_600_000;

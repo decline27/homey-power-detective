@@ -20,6 +20,8 @@ export const REFERENCES = {
 interface Track {
   name: string;
   heatPump: boolean;
+  /** Homey device class ("evcharger", "heater", "thermostat"...). */
+  cls?: string;
   intervals: Interval[];
   open: Interval | null;
   lastSeen: number;
@@ -53,11 +55,12 @@ export class ReferenceTracker {
       const power = d.capabilitiesObj!.measure_power!.value as number;
       let tr = this.tracks.get(d.id);
       if (!tr) {
-        tr = { name: d.name ?? d.id, heatPump: d.class === 'heatpump', intervals: [], open: null, lastSeen: now };
+        tr = { name: d.name ?? d.id, heatPump: d.class === 'heatpump', cls: d.class, intervals: [], open: null, lastSeen: now };
         this.tracks.set(d.id, tr);
       }
       tr.name = d.name ?? tr.name;
       tr.heatPump = d.class === 'heatpump';
+      tr.cls = d.class ?? tr.cls;
       if (tr.open && now - tr.lastSeen > REFERENCES.MAX_SILENCE_MS) this.close(tr, tr.lastSeen);
       const on = power > REFERENCES.ON_W;
       if (on && !tr.open) tr.open = { start: now, end: now };
@@ -91,6 +94,11 @@ export class ReferenceTracker {
     }));
   }
 
+  /** Homey device class by device id. */
+  classes(): Map<string, string> {
+    return new Map([...this.tracks.entries()].filter(([, t]) => typeof t.cls === 'string').map(([id, t]) => [id, t.cls as string]));
+  }
+
   heatPumpIds(): string[] {
     return [...this.tracks.entries()].filter(([, t]) => t.heatPump).map(([id]) => id);
   }
@@ -107,6 +115,7 @@ export class ReferenceTracker {
       t.tracks.set(id, {
         name: String(tr.name ?? id),
         heatPump: tr.heatPump === true,
+        cls: typeof tr.cls === 'string' ? tr.cls : undefined,
         intervals: tr.intervals.filter(i => Number.isFinite(i?.start) && Number.isFinite(i?.end)),
         open: tr.open && Number.isFinite(tr.open.start) ? { start: tr.open.start, end: tr.open.end } : null,
         lastSeen: Number(tr.lastSeen) || 0,

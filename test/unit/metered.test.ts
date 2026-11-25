@@ -25,6 +25,8 @@ interface SimDevice {
   lagMs: number;
   /** Shows on the house meter (false: behind another meter). */
   onPulse?: boolean;
+  /** What the device reports, when not its power (a spa's heater blips the Pulse never shows). */
+  reported?: (t: number) => number;
 }
 
 /** Steps 10 s: the Pulse reading goes in raw; devices report their changes `lagMs` late. */
@@ -40,7 +42,7 @@ function run(md: MeteredDevices, devices: SimDevice[], from: number, to: number,
     md.observe(r);
     seen.push(md.residual(r));
     for (const d of devices) {
-      const v = d.w(t - d.lagMs);
+      const v = (d.reported ?? d.w)(t - d.lagMs);
       if (reported.get(d.id) !== v) {
         reported.set(d.id, v);
         md.power(d.id, d.name, v, t);
@@ -90,6 +92,41 @@ describe('learning each device from the Pulse', () => {
     expect(s.share![1]).toBeGreaterThan(0.85);
     expect(s.lagMs!).toBeGreaterThan(0);
     expect(s.lagMs!).toBeLessThanOrEqual(15_000);
+  });
+
+  test('a spa reporting 6 s heater blips: they teach nothing, so an L1 load switching minutes before is not the spa', () => {
+    const md = new MeteredDevices('Europe/Stockholm');
+    const heater = sessions(2700, 45, 15, 10);
+    // Between heats, the spa reports its heater on for 6 s every 3 min; the Pulse shows nothing...
+    const blips = (t: number) => (heater(t) ? 2700 : !heater(t - 3 * MIN) && !heater(t + 3 * MIN) && ((t - T0) / 1000) % 180 < 6 ? 2700 : 0);
+    const bwa: SimDevice = { id: 'spa', name: 'BWA Spa', share: [0, 1, 0], w: heater, reported: blips, lagMs: 5000 };
+    // ...while an unmetered 2.7 kW load on L1 switches 2 min before each blip.
+    // (Only between heats, 3 min clear of them: at a heat's own step the two would be one.)
+    const clear = (t: number) => !heater(t) && !heater(t - 3 * MIN) && !heater(t + 3 * MIN);
+    const floor: SimDevice = { id: 'none', name: 'unmetered', share: [1, 0, 0], w: t => (clear(t) && ((t - T0) / 1000 + 120) % 180 < 60 ? 2700 : 0), lagMs: 0, onPulse: true };
+    const md2 = md;
+    run(md2, [bwa, { ...floor, reported: () => 0 }], T0, T0 + 6 * 60 * MIN);
+    const s = statusOf(md2, 'spa');
+    expect(s.share![1]).toBeGreaterThan(0.85);
+    expect(s.misses).toBeLessThanOrEqual(2);
+    expect(s.live).toBe(true);
+  });
+
+  test('a fast device is not matched to a step minutes before its report', () => {
+    const md = new MeteredDevices('Europe/Stockholm');
+    // Learns the spa first (5 s late, L2)...
+    run(md, [spa()], T0, T0 + 4 * 60 * MIN);
+    expect(statusOf(md, 'spa').live).toBe(true);
+    // ...then a report with no step of its own, but an L1 step of the same size 3 min before it.
+    const t = T0 + 5 * 60 * MIN;
+    for (let x = t - 5 * MIN; x < t + 2 * MIN; x += 10_000) {
+      const w: Vec3 = [BASE[0] + (x >= t - 3 * MIN ? 3000 : 0), BASE[1], BASE[2]];
+      md.observe({ t: x, w, total: w[0] + w[1] + w[2] });
+      if (x === t - 5 * MIN) md.power('spa', 'BWA Spa', 0, x);
+      if (x === t) md.power('spa', 'BWA Spa', 3000, x);
+    }
+    const last = md.snapshot().devices.find(d => d.id === 'spa')!.outcomes.slice(-1)[0];
+    expect(last.hit).toBe(false); // not the L1 step 3 min earlier
   });
 
   test('switching together with a known device: its part is taken out, the share stays right', () => {

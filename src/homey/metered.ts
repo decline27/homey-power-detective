@@ -26,6 +26,16 @@ export const METERED = {
   SEARCH_BEFORE_MS: 5 * 60_000,
   /** ...or this much after it. */
   SEARCH_AFTER_MS: 30_000,
+  /**
+   * A device that reports fast (learned lag within MAX_LAG_MS) is looked for only this long before
+   * its report (ms): the 5-minute search for MELCloud let a spa match the floor heating 4 min off.
+   */
+  FAST_SEARCH_BEFORE_MS: 60_000,
+  /**
+   * A change undone within this (ms) is a blip the house meter cannot show: the BWA spa reports
+   * its heater on for 6 s and off again, dozens of times an hour, with nothing on the Pulse.
+   */
+  BLIP_MS: 15_000,
   /** Mean power on each side of a candidate step (ms). */
   WINDOW_MS: 30_000,
   /** The house meter step must match the device's change to within this. */
@@ -123,8 +133,18 @@ export class MeteredDevices {
     if (!Number.isFinite(w)) return;
     const d = this.device(id, name);
     if (d.w !== null && Math.abs(w - d.w) >= METERED.MIN_CHANGE_W) {
-      this.pending.push({ id, t, dW: w - d.w });
-      this.recent.push({ id, t, dW: w - d.w });
+      const dW = w - d.w;
+      // Undoing its own change of a moment ago: neither is looked for.
+      const blip = this.pending.find(
+        p => p.id === id && t - p.t <= METERED.BLIP_MS && Math.abs(p.dW + dW) <= Math.max(METERED.MATCH_TOL_W, METERED.MATCH_TOL_REL * Math.abs(dW))
+      );
+      if (blip) {
+        this.pending = this.pending.filter(p => p !== blip);
+        this.recent = this.recent.filter(p => !(p.id === id && p.t === blip.t));
+      } else {
+        this.pending.push({ id, t, dW });
+        this.recent.push({ id, t, dW });
+      }
     }
     d.w = w;
     d.at = t;
@@ -223,9 +243,12 @@ export class MeteredDevices {
       });
     if (others.some(o => !o.known && Math.abs(o.t - e.t) <= 2 * METERED.WINDOW_MS)) return;
     const tol = Math.max(METERED.MATCH_TOL_W, METERED.MATCH_TOL_REL * Math.abs(e.dW));
+    const own = this.learned(d);
+    const fast = !!own && d.outcomes.filter(o => o.hit).length >= METERED.MIN_MATCHES && Math.abs(own.lagMs) <= METERED.MAX_LAG_MS;
+    const searchBefore = fast ? METERED.FAST_SEARCH_BEFORE_MS : METERED.SEARCH_BEFORE_MS;
     let best: { err: number; dist: number; t: number; dw: Vec3; dT: number } | null = null;
     for (const c of this.buffer) {
-      if (c.t < e.t - METERED.SEARCH_BEFORE_MS || c.t > e.t + METERED.SEARCH_AFTER_MS) continue;
+      if (c.t < e.t - searchBefore || c.t > e.t + METERED.SEARCH_AFTER_MS) continue;
       const before = this.mean(c.t - METERED.WINDOW_MS, c.t);
       const after = this.mean(c.t, c.t + METERED.WINDOW_MS);
       if (!before || !after) continue;

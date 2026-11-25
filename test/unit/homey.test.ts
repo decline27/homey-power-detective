@@ -1,4 +1,4 @@
-import { LoadView, analyse, displayName, floorW, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
+import { LoadView, analyse, deviceRunsOf, displayName, floorW, heatPumpLoads, meteredRunOf, nameFromDevices, onNow, startsOfStoppedDevices } from '../../src/homey/analysis';
 import { latestFromDevice, meterCandidates, pickMeter, readingFrom } from '../../src/homey/meter';
 import { silentStretches } from '../../src/engine/labels';
 import { MeteredDevices } from '../../src/homey/metered';
@@ -297,6 +297,27 @@ describe('analysis', () => {
         ['hp']
       )
     ).toEqual(['a', 'c']);
+  });
+
+  test("a metered device's runs from its own readings: blips dropped, the day's energy spread, heaters and unscheduled thermostats left out", () => {
+    const H = 3_600_000;
+    const day0 = Date.UTC(2026, 10, 1, 23); // local midnight 11-02
+    const iv = (h: number, mins: number) => ({ start: day0 + h * H, end: day0 + h * H + mins * MIN });
+    const refs = [
+      { id: 'ev', name: 'Easee ladder', intervals: [iv(18, 60), iv(19.5, 1), iv(21, 60)] },
+      { id: 'spa', name: 'BWA Spa', intervals: [iv(8, 30), iv(32, 30), iv(56, 30), iv(3, 60)] },
+      { id: 'floor', name: 'Floor', intervals: Array.from({ length: 24 }, (_, h) => iv(h, 20)) },
+      { id: 'room', name: 'Space heater', intervals: [iv(6, 60)] },
+      { id: 'hp', name: 'Heatpump', intervals: [iv(0, 600)] },
+    ];
+    const classes = new Map([['ev', 'evcharger'], ['spa', 'thermostat'], ['floor', 'thermostat'], ['room', 'heater'], ['hp', 'heatpump']]);
+    const energy = (date: string) => (date === '2026-11-02' ? [{ id: 'ev', kWh: 22 }, { id: 'spa', kWh: 6 }] : [{ id: 'spa', kWh: 1.5 }]);
+    const out = deviceRunsOf(refs, classes, ['hp'], energy, day0, day0 + 3 * 24 * H, 'Europe/Stockholm');
+    expect(out.map(d => d.id)).toEqual(['ev', 'spa']);
+    const ev = out[0];
+    expect(ev.runs).toHaveLength(2); // the 1-minute blip is not a run...
+    const kWh = ev.runs.reduce((s, a) => s + ((a.delta[0] + a.delta[1] + a.delta[2]) * (a.end - a.start)) / 3.6e9, 0);
+    expect(kWh).toBeCloseTo((22 * 120) / 121, 1); // ...but its share of the day's energy stays with it
   });
 
   test('the base load is the lowest complete day: one cold day with the heat pump on all day does not set it', () => {

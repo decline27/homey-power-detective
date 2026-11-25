@@ -359,6 +359,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       metered: this.metered,
       temps: this.temps,
       deviceMatches: this.deviceMatches,
+      classes: this.refs.classes(),
     });
     this.deviceMatches = this.analysis.deviceMatches;
     for (const f of this.analysis.findings) {

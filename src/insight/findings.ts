@@ -54,6 +54,12 @@ export interface FindingInputs {
    * load's own finding is about the runs no device explains. A heat pump's runs are not shifted.
    */
   deviceOf?: (a: Activation, loadId: string) => { id: string; name: string; heatPump: boolean } | null;
+  /**
+   * Metered devices' runs from their own readings (on/off and energy). When given, a device's
+   * shift finding comes from these, not from the runs the house meter happened to pair: a device
+   * subtracted live leaves no runs there, and its own meter is exact.
+   */
+  deviceRuns?: Array<{ id: string; name: string; runs: Activation[]; observedDays: number }>;
 }
 
 export const FINDING_LIMITS = {
@@ -206,8 +212,12 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
       const name = inp.names[c.id] ?? `A ${round(c.medianW, -1)} W load on ${c.phases}`;
       shiftable(`shiftable:${c.id}`, name, own, observedDays, inp.names[c.id] ? 'high' : 'medium', c.id);
     }
-    for (const [id, d] of devices) {
-      shiftable(`shiftable:device:${id}`, d.name, d.runs.sort((x, y) => x.start - y.start), d.observedDays, 'high');
+    if (inp.deviceRuns) {
+      for (const d of inp.deviceRuns) shiftable(`shiftable:device:${d.id}`, d.name, d.runs, d.observedDays, 'high');
+    } else {
+      for (const [id, d] of devices) {
+        shiftable(`shiftable:device:${id}`, d.name, d.runs.sort((x, y) => x.start - y.start), d.observedDays, 'high');
+      }
     }
   }
 
