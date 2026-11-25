@@ -25,6 +25,7 @@ import { Reference, matchReferences } from '../../src/engine/labels';
 import { Interval, Score, intervalsFromPower } from '../../src/engine/score';
 import { Activation, LoadCluster, activationKWh } from '../../src/engine/types';
 import { Latest, readingFrom } from '../../src/homey/meter';
+import { buildDayLedger } from '../../src/insight/ledger';
 
 const SAMPLE_MS = 10_000;
 const CAP: Record<string, string> = {
@@ -206,6 +207,25 @@ const devices: DeviceScore[] = refs.map(r => {
   };
 });
 
+// The balanced 3-phase tracker (src/engine/balanced.ts), against the device it overlaps best.
+const bal = engine.balanced.allIntervals();
+const balKWh = engine.balanced.energy().reduce((x, d) => x + d.kWh, 0);
+const balanced = refs
+  .map(r => {
+    const on = unionMs(r.intervals);
+    const found = unionMs(bal);
+    const both = intersectMs(r.intervals, bal);
+    const recall = on ? both / on : 0;
+    const precision = found ? both / found : 0;
+    return { id: r.id, name: r.name, timeRecall: recall, timePrecision: precision, energyRatio: r.kWh > 0 ? balKWh / r.kWh : null, intervals: bal.length };
+  })
+  .sort((a, b) => b.timeRecall * b.timePrecision - a.timeRecall * a.timePrecision)[0] ?? null;
+const alwaysOn = engine.days().map(d => {
+  const off = engine.balanced.restDays().find(x => x.date === d.date);
+  const net = engine.balanced.netDays().find(x => x.date === d.date);
+  return { date: d.date, houseW: d.hist ? buildDayLedger(d, [], { start: 0, end: 0 }).baseloadW : null, restW: buildDayLedger(d, [], { start: 0, end: 0 }, undefined, { off, net }).baseloadW };
+});
+
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const result = {
   window: { from: new Date(from).toISOString(), to: new Date(to).toISOString(), days: Math.round(days * 100) / 100 },
@@ -216,6 +236,8 @@ const result = {
   wrongPairs: { count: wrong.length, share: clustered.length ? wrong.length / clustered.length : 0 },
   openStarts: { mean: mean(openCounts), max: Math.max(0, ...openCounts) },
   devices,
+  balanced,
+  alwaysOn,
 };
 
 const pct = (x: number | null) => (x === null ? '   -' : `${Math.round(x * 100)}%`.padStart(4));
@@ -229,4 +251,10 @@ for (const d of devices) {
     `${d.name.slice(0, 30).padEnd(30)} ${String(d.runs).padStart(5)} ${String(d.thresholdW).padStart(4)}  ${run}   ${pct(d.timeRecall)} ${pct(d.timePrecision)}   ${pct(d.energyRatio)}   ${d.loads.join(' ')}`
   );
 }
+if (balanced) {
+  console.log(
+    `balanced 3-phase vs ${balanced.name}: time R/P ${pct(balanced.timeRecall)} ${pct(balanced.timePrecision)}, energy ${pct(balanced.energyRatio)}, ${balanced.intervals} intervals`
+  );
+}
+console.log('always-on p5 W (house / without balanced):', alwaysOn.map(a => `${a.date.slice(5)} ${a.houseW}/${a.restW}`).join('  '));
 if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify(result, null, 1));

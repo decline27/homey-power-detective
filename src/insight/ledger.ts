@@ -8,6 +8,9 @@ import { DayRecord, percentileW } from '../engine/day-meter';
 import { Activation, LoadCluster, activationW } from '../engine/types';
 import { hourStart } from './time';
 
+/** Off-time a day needs before its always-on comes from it (ms). */
+export const FLOOR_MIN_COVER_MS = 3_600_000;
+
 /** Price per kWh for the hour starting at `hour` (ms), or null when unknown. */
 export type PriceAt = (hour: number) => number | null;
 
@@ -53,9 +56,17 @@ export function buildDayLedger(
   day: DayRecord,
   loads: LoadCluster[],
   bounds: { start: number; end: number },
-  price?: PriceAt
+  price?: PriceAt,
+  /** The same day without the balanced 3-phase load (a heat pump): its off-times, and the house minus it. */
+  floor?: { off?: DayRecord; net?: DayRecord }
 ): DayLedger {
-  const baseloadW = percentileW(day, 0.05);
+  // The day overstates the base when the heat pump ran through its lowest hours. Then the times
+  // it was off, with at least an hour of them; else (it never stopped) the house minus it, which
+  // may undershoot a little. Never above the day's own.
+  const dayW = percentileW(day, 0.05);
+  const off = floor?.off && floor.off.coveredMs >= FLOOR_MIN_COVER_MS ? floor.off : floor?.net && floor.net.coveredMs >= 0.9 * day.coveredMs ? floor.net : null;
+  const floorW = off ? percentileW(off, 0.05) : null;
+  const baseloadW = dayW === null ? floorW : floorW === null ? dayW : Math.min(dayW, floorW);
   const coveredHours = day.coveredMs / 3_600_000;
   const baseloadKWh = baseloadW === null ? 0 : (baseloadW * coveredHours) / 1000;
   const rows: LedgerRow[] = loads

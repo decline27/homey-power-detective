@@ -8,6 +8,7 @@
  *     -> store         (21 days, capped)
  *     -> analyse()     (loads with statistics, whole-house days)
  */
+import { BalancedSnapshot, BalancedTracker } from './balanced';
 import { clusterActivations } from './clustering';
 import { DETECTOR, PAIRING, STORE } from './config';
 import { DayMeter, DayRecord } from './day-meter';
@@ -30,6 +31,7 @@ export interface EngineSnapshot {
   firstReading: number | null;
   lastReading: number | null;
   registry?: RegisteredLoad[];
+  balanced?: BalancedSnapshot;
 }
 
 export interface PushResult {
@@ -45,14 +47,18 @@ export class PowerEngine {
   private firstReading: number | null = null;
   private lastReading: number | null = null;
   private registry = new LoadRegistry();
+  /** The balanced 3-phase load (a heat pump), followed level by level, not by steps. */
+  balanced: BalancedTracker;
 
   constructor(readonly timeZone = 'Europe/Stockholm') {
     this.meter = new DayMeter(timeZone);
+    this.balanced = new BalancedTracker(timeZone);
   }
 
   push(r: Reading): PushResult {
     const total = Number.isFinite(r.total) ? (r.total as number) : r.w[0] + r.w[1] + r.w[2];
     this.meter.push(r.t, total);
+    this.balanced.push(r.t, r.w, total);
     if (this.firstReading === null) this.firstReading = r.t;
     this.lastReading = r.t;
     const steps: StepEvent[] = [];
@@ -124,6 +130,7 @@ export class PowerEngine {
       firstReading: this.firstReading,
       lastReading: this.lastReading,
       registry: this.registry.snapshot(),
+      balanced: this.balanced.snapshot(),
     };
   }
 
@@ -145,6 +152,7 @@ export class PowerEngine {
     e.firstReading = typeof s.firstReading === 'number' ? s.firstReading : null;
     e.lastReading = typeof s.lastReading === 'number' ? s.lastReading : null;
     e.registry = new LoadRegistry(Array.isArray(s.registry) ? s.registry : []);
+    e.balanced = BalancedTracker.restore(s.balanced, timeZone);
     return e;
   }
 }

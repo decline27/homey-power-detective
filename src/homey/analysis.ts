@@ -456,14 +456,18 @@ export function analyse(
   const names = Object.fromEntries(loads.filter(l => l.name).map(l => [l.id, l.name as string]));
   const heatPumpLoadIds = heatPumpLoads(loads, heatPumpDeviceIds);
 
-  const allDays = engine.days().map(d => buildDayLedger(d, clusters, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
+  const offDays = new Map(engine.balanced.restDays().map(d => [d.date, d]));
+  const netDays = new Map(engine.balanced.netDays().map(d => [d.date, d]));
+  const ledgerOf = (d: DayRecord, cs: LoadCluster[]) =>
+    buildDayLedger(d, cs, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice), { off: offDays.get(d.date), net: netDays.get(d.date) });
+  const allDays = engine.days().map(d => ledgerOf(d, clusters));
   const days = allDays.slice(-ANALYSIS.LEDGER_DAYS);
   // The account counts a metered device's runs once, by its own meter: not again as a load.
   const unmetered = clusters.map(c => {
     const ids = runDevices.get(c.id) ?? [];
     return { ...c, activations: c.activations.filter((_, i) => !ids[i]) };
   });
-  const accountDays = engine.days().map(d => buildDayLedger(d, unmetered, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
+  const accountDays = engine.days().map(d => ledgerOf(d, unmetered));
   // The account: the house meter's day, the device meters, the residual's loads and base.
   const loadName = new Map(loads.map(l => [l.id, displayName(l)]));
   const accountInput = (l: DayLedger): AccountInput => {

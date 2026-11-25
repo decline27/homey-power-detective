@@ -39,7 +39,7 @@ export class DayMeter {
     return this.dateCache.date;
   }
 
-  constructor(private readonly timeZone: string, private readonly maxGapMs = 90_000) {}
+  constructor(private readonly timeZone: string, private readonly maxGapMs = 90_000, private readonly maxDays = MAX_DAYS) {}
 
   push(t: number, totalW: number): void {
     if (!Number.isFinite(t) || !Number.isFinite(totalW) || totalW < 0) {
@@ -64,7 +64,7 @@ export class DayMeter {
       d = { date, kWh: 0, coveredMs: 0, hist: new Array(HIST_BINS).fill(0) };
       this.days.push(d);
       this.days.sort((a, b) => (a.date < b.date ? -1 : 1));
-      if (this.days.length > MAX_DAYS) this.days.shift();
+      if (this.days.length > this.maxDays) this.days.shift();
     }
     return d;
   }
@@ -80,7 +80,7 @@ export class DayMeter {
   restore(days: DayRecord[]): void {
     this.days = days
       .filter(d => d && typeof d.date === 'string' && Array.isArray(d.hist) && d.hist.length === HIST_BINS)
-      .slice(-MAX_DAYS);
+      .slice(-this.maxDays);
   }
 }
 
