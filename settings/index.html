@@ -223,6 +223,7 @@
 
   /** A tip's title in plain words; the money is shown under it, so not in it twice. */
   function tipTitle(f) {
+    if (f.kind === 'shiftable' && f.priceFlow) return `Narrow the price window for ${plain(f.title.split(':')[0])}`;
     const who = /^(.+): [\d,.]+ \S+\/month cheaper/.exec(f.title);
     if (f.kind === 'shiftable' && who) return `Run ${plain(who[1]).replace(/^An /, 'the ')} in the day's cheapest hours`;
     return plain(f.title);
@@ -230,6 +231,11 @@
 
   /** What a tip means, in a sentence a person would say; the app's own detail for the rest. */
   function tipText(f, cur) {
+    if (f.kind === 'shiftable' && f.priceFlow && f.costPerMonth !== null && f.savingPerMonth !== null) {
+      return `Your flow “${f.priceFlow}” already runs it on the price; it costs about ${r(f.costPerMonth, -1)} ${cur} a month. ` +
+        `Had every run started in the very cheapest hours of its day, it would have cost about ${r(f.costPerMonth - f.savingPerMonth, -1)} ${cur}: ` +
+        'the most a tighter price window in the flow could save, if it still keeps up in fewer hours.';
+    }
     if (f.kind === 'shiftable' && f.costPerMonth !== null && f.savingPerMonth !== null) {
       return `It costs about ${r(f.costPerMonth, -1)} ${cur} a month when it runs now. Started in the cheapest hours of each day, the same runs would cost about ${r(f.costPerMonth - f.savingPerMonth, -1)} ${cur}. ` +
         'A timer, its own app or a Homey flow on the electricity price can start it then.';
@@ -238,7 +244,7 @@
   }
 
   function tipCard(f, cur, testing) {
-    const money = f.savingPerMonth !== null ? `Save ~${r(f.savingPerMonth)} ${esc(cur)}/month` : f.costPerMonth !== null ? `Costs ${r(f.costPerMonth)} ${esc(cur)}/month` : '';
+    const money = f.savingPerMonth !== null ? `${f.priceFlow ? 'Up to' : 'Save'} ~${r(f.savingPerMonth)} ${esc(cur)}/month` : f.costPerMonth !== null ? `Costs ${r(f.costPerMonth)} ${esc(cur)}/month` : '';
     return `<div class="card tip">
         <div class="title">${esc(tipTitle(f))}</div>
         <div class="muted small" style="margin-top:4px">${esc(tipText(f, cur))}</div>

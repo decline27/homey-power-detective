@@ -25,6 +25,8 @@ export interface Finding {
   confidence: 'low' | 'medium' | 'high';
   /** A switch-off test that would confirm what the load is. */
   experimentHours?: number;
+  /** A shift finding for a device an enabled flow already runs on the price: that flow's name. */
+  priceFlow?: string;
 }
 
 export interface FindingInputs {
@@ -204,6 +206,7 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
         costPerMonth: (shift.actual / observedDays) * 30,
         savingPerMonth: perMonth,
         confidence,
+        ...(priceFlow ? { priceFlow } : {}),
       });
     };
     const devices = new Map<string, { name: string; runs: Activation[]; observedDays: number }>();
