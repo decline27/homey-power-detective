@@ -5,7 +5,7 @@
 import { classify, phaseLabel, phaseShare } from '../engine/clustering';
 import { PowerEngine } from '../engine/engine';
 import { LabelMatch, Reference, matchReferences, silentStretches } from '../engine/labels';
-import { Score } from '../engine/score';
+import { Interval, Score } from '../engine/score';
 import { CLUSTERING } from '../engine/config';
 import { Activation, LoadCluster, StepEvent, Vec3, activationW } from '../engine/types';
 import { Experiment, ExperimentResult, evaluateExperiment } from '../insight/experiments';
@@ -42,6 +42,12 @@ export const ANALYSIS = {
   DEVICE_OFF_MS: 30 * 60_000,
   /** A start this soon after a device's last "on" (one reading late) still came while it was on (ms). */
   DEVICE_ON_SLACK_MS: 60_000,
+  /**
+   * A heat pump on for this share of a run is that run, whenever it started: in the cold it runs
+   * for hours and modulates, so the house meter's start comes long after MELCloud's. On the
+   * Homey (2026-11-22..25) every long balanced 3-phase run overlapped it 94-100 %.
+   */
+  HEAT_PUMP_COVER_SHARE: 0.9,
 };
 
 export interface UserSettings {
@@ -254,26 +260,36 @@ export function startsOfStoppedDevices(open: StepEvent[], refs: Reference[], sha
   });
 }
 
+/** Share of [start, end) a device was on, from its on intervals. */
+function onShare(intervals: Interval[], start: number, end: number): number {
+  if (end <= start) return 0;
+  const on = intervals.reduce((t, i) => t + Math.max(0, Math.min(end, i.end) - Math.max(start, i.start)), 0);
+  return Math.min(1, on / (end - start));
+}
+
 /**
- * The metered device a run is, when one switched on with it on the same phases. Its own meter
+ * The metered device a run is, when one switched on with it on the same phases, or else a heat
+ * pump that was on through it (HEAT_PUMP_COVER_SHARE). Its own meter
  * already counts that energy. Runs, not loads: one load can be two devices of a size on one phase
  * (a spa heater and a space heater), so neither device's timing names the load as a whole.
  */
 export function meteredRunOf(
   refs: Reference[],
-  shares: Map<string, Vec3>
+  shares: Map<string, Vec3>,
+  heatPumpIds: string[] = []
 ): (a: Activation) => string | null {
   const devices = refs.filter(r => shares.has(r.id));
   return a => {
     const w = activationW(a);
     if (w <= 0) return null;
     const own = a.delta.map(x => Math.max(0, x) / w);
-    for (const r of devices) {
-      const share = shares.get(r.id) as Vec3;
-      if (own.reduce((s, x, k) => s + Math.abs(x - share[k]), 0) > CLUSTERING.MAX_SHARE_DISTANCE) continue;
-      if (r.intervals.some(i => Math.abs(i.start - a.start) <= ANALYSIS.REFERENCE_TOL_MS)) return r.id;
-    }
-    return null;
+    const fits = devices.filter(r => own.reduce((s, x, k) => s + Math.abs(x - (shares.get(r.id) as Vec3)[k]), 0) <= CLUSTERING.MAX_SHARE_DISTANCE);
+    // A device that switched on with the run first: a charger starting while the heat pump runs
+    // is the charger.
+    const started = fits.find(r => r.intervals.some(i => Math.abs(i.start - a.start) <= ANALYSIS.REFERENCE_TOL_MS));
+    if (started) return started.id;
+    const covering = fits.find(r => heatPumpIds.includes(r.id) && onShare(r.intervals, a.start, a.end) >= ANALYSIS.HEAT_PUMP_COVER_SHARE);
+    return covering ? covering.id : null;
   };
 }
 
@@ -322,7 +338,7 @@ export function analyse(
 
   // Runs that a metered device is (its phases learned from the house meter, so the check is real).
   const shares = meteredShares(sources.metered);
-  const meteredRun = meteredRunOf(refs, shares);
+  const meteredRun = meteredRunOf(refs, shares, heatPumpDeviceIds);
   const runDevices = new Map(clusters.map(c => [c.id, c.activations.map(meteredRun)]));
   const refName = new Map(refs.map(r => [r.id, r.name]));
   /** The devices a load's runs mostly are, when no single device's timing named it. */
@@ -422,8 +438,10 @@ export function analyse(
   };
 
   const names = Object.fromEntries(loads.filter(l => l.name).map(l => [l.id, l.name as string]));
+  // The heat pump's loads: its device is the load's main one (a load named "Easee ladder /
+  // Heatpump" is mostly the charger), or the user or a test named it so.
   const heatPumpLoadIds = loads
-    .filter(l => (byLoad.get(l.id) && heatPumpDeviceIds.includes(byLoad.get(l.id)!.referenceId)) || (l.name && HEAT_PUMP_NAME.test(l.name)))
+    .filter(l => (l.deviceId && heatPumpDeviceIds.includes(l.deviceId)) || (l.source !== 'device' && l.name && HEAT_PUMP_NAME.test(l.name)))
     .map(l => l.id);
 
   const allDays = engine.days().map(d => buildDayLedger(d, clusters, dayBounds(d.date, s.timeZone), prices.priceAt(s.flatPrice)));
@@ -466,10 +484,12 @@ export function analyse(
     return buildAccount({ ...accountInput(l), weatherKWh: heating && hdd !== null ? heating.slope * hdd : null });
   });
 
-  // Base load from the account's last complete day (today is partial): always-on after the
-  // weather took its share, so winter heating running all day is not called standby.
+  // Base load: the lowest always-on of the complete days (today is partial), after the weather
+  // took its share. "Never draws less" is the week's floor: a cold day with the heat pump on all
+  // day (not subtracted live, MELCloud is minutes late) raises that day's floor, not the house's.
   const fullAccounts = accounts.filter(d => d.coveredHours >= 20);
-  const baseloadW = fullAccounts.length ? fullAccounts[fullAccounts.length - 1].alwaysOnW : accounts[accounts.length - 1]?.alwaysOnW ?? null;
+  const floors = fullAccounts.map(d => d.alwaysOnW).filter((w): w is number => w !== null);
+  const baseloadW = floors.length ? Math.min(...floors) : accounts[accounts.length - 1]?.alwaysOnW ?? null;
 
   const loadDevice = new Map(loads.filter(l => l.deviceId).map(l => [l.id, l.deviceId as string]));
   const findings = buildFindings({

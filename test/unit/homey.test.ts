@@ -258,6 +258,21 @@ describe('analysis', () => {
     expect(runOf(run(T0 + 30 * MIN, v(0, 2600, 0)))).toBeNull(); // on L2, but not when the spa switched on
   });
 
+  test('a run inside a heat pump that was on for hours is the heat pump; only for a heat pump', () => {
+    const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
+    const shares = new Map([['hp', v(0.33, 0.33, 0.34)], ['spa', v(0, 1, 0)]]);
+    const refs = [
+      { id: 'hp', name: 'Heatpump', intervals: [{ start: T0, end: T0 + 600 * MIN }] },
+      { id: 'spa', name: 'BWA Spa', intervals: [{ start: T0, end: T0 + 600 * MIN }] },
+    ];
+    const runOf = meteredRunOf(refs, shares, ['hp']);
+    const run = (start: number, mins: number, delta: [number, number, number]) => ({ start, end: start + mins * MIN, delta });
+    expect(runOf(run(T0 + 120 * MIN, 221, v(700, 660, 650)))).toBe('hp'); // started 2 h after MELCloud's start
+    expect(runOf(run(T0 + 500 * MIN, 221, v(700, 660, 650)))).toBeNull(); // the heat pump stopped half-way
+    expect(runOf(run(T0 + 120 * MIN, 60, v(0, 2600, 0)))).toBeNull(); // the spa is not a heat pump: switch-on only
+    expect(meteredRunOf(refs, shares)(run(T0 + 120 * MIN, 221, v(700, 660, 650)))).toBeNull(); // no heat pump named
+  });
+
   test('an open start whose metered devices all said off since is stopped; others are left', () => {
     const v = (a: number, b: number, c: number) => [a, b, c] as [number, number, number];
     const shares = new Map([['hp', v(0.34, 0.33, 0.33)], ['ev', v(0.33, 0.33, 0.34)]]);
