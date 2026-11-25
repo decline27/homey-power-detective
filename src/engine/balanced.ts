@@ -71,6 +71,8 @@ export interface BalancedSnapshot {
   intervals: Array<[number, number, number]>;
   rest: DayRecord[];
   net?: DayRecord[];
+  /** Lowest-phase histograms learned from the raw record (base only), by day. */
+  primed?: Array<{ date: string; coveredMs: number; hist: number[] }>;
 }
 
 export class BalancedTracker {
@@ -85,6 +87,35 @@ export class BalancedTracker {
   /** Since when the estimate has been on the other side of the threshold. */
   private pending: number | null = null;
   private baseCache: { date: string; w: number | null } | null = null;
+  /**
+   * Days learned from the raw record at start (see learnBase): they teach the base only. A tracker
+   * installed this evening otherwise reads its base from this evening alone, with the heat pump on
+   * nearly all of it (2026-11-25: base 395 W, heat pump 195 W while MELCloud's meter said ~1 kW).
+   */
+  private primed: Array<{ date: string; coveredMs: number; hist: number[] }> = [];
+
+  /** Days with a complete lowest-phase histogram (a day the tracker saw, else one it learned). */
+  private baseDays(before: string): Array<{ date: string; hist: number[] }> {
+    const seen = this.days.filter(d => d.date < before && d.coveredMs >= this.cfg.BASE_MIN_COVER_MS);
+    const have = new Set(seen.map(d => d.date));
+    const learned = this.primed.filter(d => d.date < before && !have.has(d.date) && d.coveredMs >= this.cfg.BASE_MIN_COVER_MS);
+    return [...seen, ...learned].sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+
+  /** Whether a day still needs learning from the raw record. */
+  needsBase(date: string): boolean {
+    const known = (d: { date: string; coveredMs: number }) => d.date === date && d.coveredMs >= this.cfg.BASE_MIN_COVER_MS;
+    return !this.days.some(known) && !this.primed.some(known);
+  }
+
+  /** A past day's lowest-phase histogram, from the raw record: the base only, no energy or runs. */
+  learnBase(date: string, hist: number[], coveredMs: number): void {
+    if (hist.length !== this.cfg.BINS || !(coveredMs > 0)) return;
+    this.primed = [...this.primed.filter(d => d.date !== date), { date, coveredMs, hist: [...hist] }]
+      .sort((a, b) => (a.date < b.date ? -1 : 1))
+      .slice(-this.cfg.KEEP_DAYS);
+    this.baseCache = null;
+  }
 
   constructor(private readonly timeZone: string, private readonly cfg = BALANCED) {
     this.rest = new DayMeter(timeZone, undefined, cfg.KEEP_DAYS);
@@ -95,7 +126,7 @@ export class BalancedTracker {
   baseW(now: number): number | null {
     const today = localDate(now, this.timeZone);
     if (this.baseCache?.date === today) return this.baseCache.w;
-    const past = this.days.filter(d => d.date < today && d.coveredMs >= this.cfg.BASE_MIN_COVER_MS).slice(-this.cfg.BASE_DAYS);
+    const past = this.baseDays(today).slice(-this.cfg.BASE_DAYS);
     const lows = past.map(d => percentile(d.hist, this.cfg.BASE_PERCENTILE, this.cfg.BIN_W)).filter((x): x is number => x !== null);
     const w = lows.length ? Math.min(...lows) : null;
     // Cached for the day only when it came from complete days: before that, today's own data.
@@ -198,6 +229,7 @@ export class BalancedTracker {
       intervals: this.intervals.map(i => [i.start, i.end, Math.round(i.w)]),
       rest: this.rest.all(),
       net: this.net.all(),
+      primed: this.primed.map(d => ({ ...d, hist: [...d.hist] })),
     };
   }
 
@@ -213,6 +245,7 @@ export class BalancedTracker {
       .map(([start, end, w]) => ({ start, end, w }));
     b.rest.restore(Array.isArray(s.rest) ? s.rest : []);
     b.net.restore(Array.isArray(s.net) ? s.net : []);
+    b.primed = (Array.isArray(s.primed) ? s.primed : []).filter(d => d && typeof d.date === 'string' && Array.isArray(d.hist) && d.hist.length === BALANCED.BINS && d.coveredMs > 0);
     return b;
   }
 }

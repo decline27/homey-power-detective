@@ -37,6 +37,10 @@
       "method": "GET",
       "path": "/state"
     },
+    "getLive": {
+      "method": "GET",
+      "path": "/live"
+    },
     "getMeters": {
       "method": "GET",
       "path": "/meters"

@@ -13,8 +13,10 @@ import * as fs from 'fs';
 import { classify } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
 import { Activation, StepEvent, activationKWh, activationW, Vec3 } from './src/engine/types';
-import { DayMeter, DayRecord } from './src/engine/day-meter';
-import { Analysis, FlowLike, OPEN_STARTS, UserSettings, analyse, displayName, flowsRunningOnPrice, startsThatDoNotFit, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
+import { DayMeter, DayRecord, localDate } from './src/engine/day-meter';
+import { Analysis, FlowLike, OPEN_STARTS, UserSettings, analyse, displayName, flowsRunningOnPrice, heatPumpLoads, startsThatDoNotFit, meteredShares, onNow, runningNow, startsOfStoppedDevices } from './src/homey/analysis';
+import { Live, fitLive } from './src/homey/live';
+import { lowestPhaseDay } from './src/homey/prime';
 import { MeteredDevices } from './src/homey/metered';
 import { TemperatureBook } from './src/insight/weather';
 import { DeviceLike, Latest, METER_SETTING, PHASE_CURRENT, PHASE_VOLTAGE, latestFromDevice, meterCandidates, pickMeter, readingFrom } from './src/homey/meter';
@@ -114,6 +116,27 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.timers.push(this.homey.setInterval(() => this.refresh().catch(e => this.error('Analysis', e)), ANALYSE_MS));
     this.timers.push(this.homey.setInterval(() => this.save(), SAVE_MS));
     this.homey.setTimeout(() => this.refresh().catch(e => this.error('Analysis', e)), 30_000);
+    this.homey.setTimeout(() => this.primeBase(), 20_000);
+  }
+
+  /**
+   * The heat pump tracker's base from the raw record's past days it has not seen whole (a new
+   * install, or the days before it existed): one day at a time, so start-up stays light.
+   */
+  private baseTried = new Set<string>();
+  private primeBase(): void {
+    try {
+      const today = localDate(Date.now(), this.timeZone);
+      const day = this.recorder.days().find(d => d.date < today && !this.baseTried.has(d.date) && this.engine.balanced.needsBase(d.date));
+      if (!day) return;
+      this.baseTried.add(day.date);
+      const { coveredMs, hist } = lowestPhaseDay(fs.readFileSync(`${RAW_DIR}/${day.date}.csv`, 'utf8'), SAMPLE_MS);
+      this.engine.balanced.learnBase(day.date, hist, Math.max(coveredMs, 1));
+      this.log('Heat pump base: learned', day.date, `(${Math.round(coveredMs / 3_600_000)} h)`, '→ base', this.engine.balanced.baseW(Date.now()));
+      this.homey.setTimeout(() => this.primeBase(), 2_000);
+    } catch (e) {
+      this.error('Base', e);
+    }
   }
 
   async onUninit(): Promise<void> {
@@ -237,6 +260,31 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.overflowSince = null;
   }
 
+  /** The last reading minus the devices subtracted live: what detection saw. */
+  private lastResidual: { t: number; w: Vec3 } | null = null;
+
+  /**
+   * What is on now, fitted to what the meter draws now (src/homey/live.ts): the heat pump from the
+   * level tracker, open starts only while their phases still carry them. Null without a fresh reading.
+   */
+  live(now = Date.now()): Live | null {
+    const a = this.analysis;
+    const r = this.lastResidual;
+    if (!a || !r || now - r.t > 120_000) return null;
+    const hpIds = this.refs.heatPumpIds();
+    const hpName = hpIds.map(id => this.refs.references().find(x => x.id === id)?.name).find(Boolean) ?? null;
+    const hpW = this.engine.balanced.nowW();
+    return fitLive({
+      now,
+      phaseW: r.w,
+      baseW: this.engine.balanced.baseW(now),
+      heatPump: hpW > 0 ? { w: hpW, since: this.engine.balanced.onSince(), name: hpName ?? 'Heat pump (likely)', named: !!hpName, deviceId: hpIds[0] ?? null } : null,
+      starts: runningNow(this.engine, a.clusters, now).map(x => ({ start: { t: x.t, settledAt: x.t, delta: x.delta }, cluster: x.cluster })),
+      loads: a.loads,
+      heatPumpLoadIds: heatPumpLoads(a.loads, hpIds),
+    });
+  }
+
   private sampleOnce(): void {
     const now = Date.now();
     const reading = readingFrom(this.latest, now);
@@ -254,6 +302,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     this.house.push(reading.t, Number.isFinite(reading.total) ? (reading.total as number) : reading.w[0] + reading.w[1] + reading.w[2]);
     this.metered.observe(reading);
     const residual = this.metered.residual(reading);
+    this.lastResidual = residual;
     const { steps, activations } = this.engine.push(residual);
     this.retireImpossibleStarts(residual.w, reading.t);
     steps.filter(s => s.delta[0] + s.delta[1] + s.delta[2] > 0).forEach(s => this.onStart(s));
@@ -542,7 +591,7 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     return {
       ...rest,
       // Live, not from the last analysis: what the house meter shows now.
-      onNow: onNow(this.engine, a.clusters, a.loads, now),
+      onNow: this.live(now)?.rows ?? onNow(this.engine, a.clusters, a.loads, now),
       totalW: total && now - total.at < 120_000 ? Math.round(total.value) : null,
       status: this.status,
       meter: this.meterName,

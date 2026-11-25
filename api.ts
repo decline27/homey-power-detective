@@ -10,6 +10,11 @@ module.exports = {
     return homey.app.view();
   },
 
+  /** What is on now, fitted to the meter (small: for the wall dashboard and the like). */
+  async getLive({ homey }: Ctx) {
+    return homey.app.live() ?? { rows: null };
+  },
+
   async getMeters({ homey }: Ctx) {
     return homey.app.meterOptions();
   },

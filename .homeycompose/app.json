@@ -21,6 +21,7 @@
   "support": "https://github.com/decline27/homey-power-detective/issues",
   "api": {
     "getState": { "method": "GET", "path": "/state" },
+    "getLive": { "method": "GET", "path": "/live" },
     "getMeters": { "method": "GET", "path": "/meters" },
     "setName": { "method": "POST", "path": "/name" },
     "startTest": { "method": "POST", "path": "/test" },
