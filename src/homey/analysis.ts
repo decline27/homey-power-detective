@@ -58,6 +58,11 @@ export interface UserSettings {
   flatPrice: number | null;
   cop: number;
   timeZone: string;
+  /**
+   * Devices someone else starts and stops: the EV charger on a grid-flexibility deal (paid to be
+   * stopped and started for the grid). Never a "cheaper at the cheapest hours" finding.
+   */
+  steered?: string[];
 }
 
 export interface LoadView {
@@ -652,10 +657,18 @@ export function analyse(
   const baseloadW = fullAccounts.length ? floorW(fullAccounts) : accounts[accounts.length - 1]?.alwaysOnW ?? null;
 
   const loadDevice = new Map(loads.filter(l => l.deviceId).map(l => [l.id, l.deviceId as string]));
+  // Steered devices' loads: matched to the device, or named after it ("Easee ladder / Heatpump").
+  const steered = s.steered ?? [];
+  const steeredNames = refs.filter(r => steered.includes(r.id)).map(r => r.name.toLowerCase()).filter(n => n.length >= 3);
+  const steeredLoadIds = clusters
+    .filter(c => steered.includes(loadDevice.get(c.id) ?? '') || steeredNames.some(n => (names[c.id] ?? '').toLowerCase().includes(n)))
+    .map(c => c.id);
   const findings = buildFindings({
     loads: clusters,
     names,
     heatPumpLoadIds,
+    steeredDeviceIds: steered,
+    steeredLoadIds,
     baseloadW,
     baseloadFullDay: fullAccounts.length > 0,
     avgPrice,

@@ -26,6 +26,12 @@ module.exports = {
     return { ok: true };
   },
 
+  /** { deviceId, steered: true|false }: a device someone else starts and stops (a grid deal). */
+  async setSteered({ homey, body }: Ctx) {
+    if (!body || typeof body.deviceId !== 'string') throw new Error('deviceId missing');
+    return { ok: true, steered: homey.app.setSteered(body.deviceId, body.steered !== false) };
+  },
+
   async startTest({ homey, body }: Ctx) {
     if (!body || typeof body.loadId !== 'string') throw new Error('loadId missing');
     const exp = homey.app.startExperiment(body.loadId, String(body.label ?? ''), Number(body.hours) || undefined);

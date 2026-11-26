@@ -24,6 +24,7 @@
     "getLive": { "method": "GET", "path": "/live" },
     "getMeters": { "method": "GET", "path": "/meters" },
     "setName": { "method": "POST", "path": "/name" },
+    "setSteered": { "method": "POST", "path": "/steered" },
     "startTest": { "method": "POST", "path": "/test" },
     "writeSummary": { "method": "POST", "path": "/summary" },
     "getSavedState": { "method": "GET", "path": "/debug/state" },

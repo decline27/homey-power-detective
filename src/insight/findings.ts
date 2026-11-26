@@ -35,6 +35,9 @@ export interface FindingInputs {
   names: Record<string, string>;
   /** Load ids that are the heat pump (matched to it, or named so). */
   heatPumpLoadIds: string[];
+  /** Devices, and loads that are them, someone else starts and stops (a grid deal): never shiftable. */
+  steeredDeviceIds?: string[];
+  steeredLoadIds?: string[];
   /** Always-on power (W), from the day ledger. */
   baseloadW: number | null;
   /** False when it comes from a partial day: a few evening hours are not "never" (default true). */
@@ -212,7 +215,7 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
     const devices = new Map<string, { name: string; runs: Activation[]; observedDays: number }>();
     for (const c of inp.loads) {
       // A thermostat's runs come when the heat is needed, metered or not.
-      if (c.rhythmic || inp.heatPumpLoadIds.includes(c.id)) continue;
+      if (c.rhythmic || inp.heatPumpLoadIds.includes(c.id) || inp.steeredLoadIds?.includes(c.id)) continue;
       const observedDays = c.count / c.startsPerDay;
       const own: Activation[] = [];
       for (const a of typicalRuns(c)) {
@@ -228,9 +231,10 @@ export function buildFindings(inp: FindingInputs, limits = FINDING_LIMITS): Find
       shiftable(`shiftable:${c.id}`, name, own, observedDays, inp.names[c.id] ? 'high' : 'medium', c.id);
     }
     if (inp.deviceRuns) {
-      for (const d of inp.deviceRuns) shiftable(`shiftable:device:${d.id}`, d.name, d.runs, d.observedDays, d.priceFlow ? 'medium' : 'high', undefined, d.priceFlow);
+      for (const d of inp.deviceRuns.filter(x => !inp.steeredDeviceIds?.includes(x.id))) shiftable(`shiftable:device:${d.id}`, d.name, d.runs, d.observedDays, d.priceFlow ? 'medium' : 'high', undefined, d.priceFlow);
     } else {
       for (const [id, d] of devices) {
+        if (inp.steeredDeviceIds?.includes(id)) continue;
         shiftable(`shiftable:device:${id}`, d.name, d.runs.sort((x, y) => x.start - y.start), d.observedDays, 'high');
       }
     }

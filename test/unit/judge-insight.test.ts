@@ -264,6 +264,18 @@ describe('ledger and findings', () => {
     })).toEqual([]);
   });
 
+  test('shiftable: never for a device someone else starts and stops (the charger on a grid deal)', () => {
+    const ev = [0, 1, 2].map(d => act(T0 + d * 24 * H + 18 * H, 60, [2400, 2400, 0]));
+    const loads = clusterActivations(ev, { from: T0, to: T0 + 3 * 24 * H });
+    const base = { loads, names: { [loads[0].id]: 'Easee ladder' }, heatPumpLoadIds: [], baseloadW: null, avgPrice: 2, currency: 'SEK', heatPumpCop: 3, price, timeZone: 'UTC' };
+    const viaDevice = { ...base, deviceOf: () => ({ id: 'easee', name: 'Easee ladder', heatPump: false }) };
+    expect(buildFindings(viaDevice).map(x => x.id)).toEqual(['shiftable:device:easee']);
+    expect(buildFindings({ ...viaDevice, steeredDeviceIds: ['easee'] })).toEqual([]);
+    const runs = [{ id: 'easee', name: 'Easee ladder', runs: ev, observedDays: 3 }];
+    expect(buildFindings({ ...base, deviceRuns: runs, steeredDeviceIds: ['easee'], steeredLoadIds: [loads[0].id] })).toEqual([]);
+    expect(buildFindings({ ...base, steeredLoadIds: [loads[0].id] })).toEqual([]);
+  });
+
   test('shiftable: per day observed, and a missed stop is not a run of hours', () => {
     const findingsOf = (acts: Activation[], days: number) =>
       buildFindings({

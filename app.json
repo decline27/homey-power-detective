@@ -49,6 +49,10 @@
       "method": "POST",
       "path": "/name"
     },
+    "setSteered": {
+      "method": "POST",
+      "path": "/steered"
+    },
     "startTest": {
       "method": "POST",
       "path": "/test"

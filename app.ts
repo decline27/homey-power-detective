@@ -46,6 +46,8 @@ export const SETTINGS = {
   model: 'ai_model',
   language: 'language',
   summary: 'last_summary',
+  /** Device ids someone else starts and stops (a grid-flexibility deal): no shift advice. */
+  steered: 'steered_devices',
 };
 
 interface SavedState {
@@ -418,7 +420,17 @@ module.exports = class PowerDetectiveApp extends Homey.App {
       flatPrice: num(SETTINGS.flatPrice, null),
       cop: Math.min(8, Math.max(1, num(SETTINGS.cop, 3) as number)),
       timeZone: this.timeZone,
+      steered: ((s.get(SETTINGS.steered) as string[]) ?? []).filter(x => typeof x === 'string'),
     };
+  }
+
+  /** Mark a device as steered by someone else (a grid deal), or not; the analysis runs again. */
+  setSteered(deviceId: string, on: boolean): string[] {
+    const now = ((this.homey.settings.get(SETTINGS.steered) as string[]) ?? []).filter(x => x !== deviceId);
+    if (on && deviceId) now.push(deviceId);
+    this.homey.settings.set(SETTINGS.steered, now);
+    this.refresh().catch(e => this.error(e));
+    return now;
   }
 
   /** Devices an enabled flow already runs on the electricity price, with the flow's name (read hourly). */
