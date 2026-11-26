@@ -273,12 +273,14 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     if (!a || !r || now - r.t > 120_000) return null;
     const hpIds = this.refs.heatPumpIds();
     const hpName = hpIds.map(id => this.refs.references().find(x => x.id === id)?.name).find(Boolean) ?? null;
-    const hpW = this.engine.balanced.nowW();
+    // The heat pump's own figures first: the level tracker counts any load on all three phases.
+    const own = hpIds.length ? this.metered.ownPower(hpIds[0], now) : null;
+    const hpW = own ? own.w : this.engine.balanced.nowW();
     return fitLive({
       now,
       phaseW: r.w,
       baseW: this.engine.balanced.baseW(now),
-      heatPump: hpW > 0 ? { w: hpW, since: this.engine.balanced.onSince(), name: hpName ?? 'Heat pump (likely)', named: !!hpName, deviceId: hpIds[0] ?? null } : null,
+      heatPump: hpW > 0 ? { w: hpW, since: this.engine.balanced.onSince(), name: hpName ?? 'Heat pump (likely)', named: !!hpName, deviceId: hpIds[0] ?? null, share: own?.share ?? null } : null,
       starts: runningNow(this.engine, a.clusters, now).map(x => ({ start: { t: x.t, settledAt: x.t, delta: x.delta }, cluster: x.cluster })),
       loads: a.loads,
       heatPumpLoadIds: heatPumpLoads(a.loads, hpIds),

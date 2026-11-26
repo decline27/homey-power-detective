@@ -8,7 +8,9 @@
  *
  * For the live view each phase's power is shared out instead, in this order:
  *   1. the always-on base (the lowest phase's own base, on each phase: a careful floor);
- *   2. the balanced 3-phase load (the heat pump), from the level tracker, a third per phase;
+ *   2. the heat pump: its own reading or counter when usable (the level tracker read cooking on
+ *      all three phases as 4.8 kW of heat pump on 2026-11-26; it drew 1.16 kW), else the level
+ *      tracker's estimate; by its learned phase share, else a third per phase;
  *   3. the open starts, newest first: a start is shown while its phases still carry at least
  *      FIT_MIN of it, and only as much as they carry.
  * What no row takes is the rest. Nothing here changes the starts or the energy account.
@@ -57,7 +59,7 @@ export interface LiveInput {
   /** The always-on base of the lowest phase (W), or null before it is known. */
   baseW: number | null;
   /** The balanced load now: its estimate (W), since when, and what to call it. */
-  heatPump: { w: number; since: number | null; name: string; named: boolean; deviceId?: string | null } | null;
+  heatPump: { w: number; since: number | null; name: string; named: boolean; deviceId?: string | null; share?: Vec3 | null } | null;
   /** Open starts with the load each is, newest or oldest first. */
   starts: Array<{ start: StepEvent; cluster: LoadCluster | null }>;
   loads: LiveLoad[];
@@ -81,9 +83,20 @@ export function fitLive(x: LiveInput): Live {
   const rows: LiveRow[] = [];
   const hp = x.heatPump && x.heatPump.w > 0 ? x.heatPump : null;
   if (hp) {
-    const third = Math.min(hp.w / 3, ...left);
-    for (let k = 0; k < 3; k++) left[k] -= third;
-    rows.push({ loadId: null, name: hp.name, named: hp.named, suggestion: null, phases: '3-phase', usualW: null, w: Math.round(third * 3), since: hp.since ?? x.now, heatPump: true, deviceId: hp.deviceId ?? null });
+    // Its own phase share when learned (this heat pump leans on L1 and L2), else a third each.
+    let taken = 0;
+    if (hp.share) {
+      for (let k = 0; k < 3; k++) {
+        const w = Math.min(hp.w * hp.share[k], left[k]);
+        left[k] -= w;
+        taken += w;
+      }
+    } else {
+      const third = Math.min(hp.w / 3, ...left);
+      for (let k = 0; k < 3; k++) left[k] -= third;
+      taken = third * 3;
+    }
+    rows.push({ loadId: null, name: hp.name, named: hp.named, suggestion: null, phases: '3-phase', usualW: null, w: Math.round(taken), since: hp.since ?? x.now, heatPump: true, deviceId: hp.deviceId ?? null });
   }
   const starts = [...x.starts].filter(s => sum(s.start.delta) > 0).sort((a, b) => b.start.t - a.start.t);
   const byName = new Map<string, LiveRow>();

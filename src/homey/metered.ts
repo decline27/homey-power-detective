@@ -66,6 +66,13 @@ export const METERED = {
    */
   MAX_SPREAD_MS: 24 * 3_600_000,
   KEEP_DAYS: 35,
+  /** A device's own live reading is its power now while it changed within this (ms)... */
+  OWN_FRESH_MS: 10 * 60_000,
+  /** ...else its counter's rate, while the counter moved within this (ms) and its points span this. */
+  OWN_COUNTER_MAX_AGE_MS: 30 * 60_000,
+  OWN_COUNTER_MIN_SPAN_MS: 60_000,
+  OWN_COUNTER_MAX_SPAN_MS: 40 * 60_000,
+  OWN_MAX_W: 15_000,
 };
 
 interface Outcome {
@@ -85,6 +92,8 @@ interface Device {
   outcomes: Outcome[];
   live: boolean;
   days: Record<string, number>;
+  /** The counter's last few changes (not saved): its rate when the live reading freezes. */
+  changes?: Array<{ kWh: number; at: number }>;
 }
 
 export interface MeteredStatus {
@@ -159,6 +168,7 @@ export class MeteredDevices {
     const prev = d.counter;
     const changedAt = prev && kWh === prev.kWh ? prev.changedAt ?? prev.at : t;
     d.counter = { kWh, at: t, changedAt };
+    if (!prev || kWh !== prev.kWh) d.changes = [...(d.changes ?? []), { kWh, at: t }].slice(-3);
     if (!prev || t <= prev.at) return;
     let delta = kWh - prev.kWh;
     let from = prev.changedAt ?? prev.at;
@@ -323,6 +333,27 @@ export class MeteredDevices {
     return [...this.devices.values()]
       .filter(d => (d.days[date] ?? 0) > 0)
       .map(d => ({ id: d.id, name: d.name, kWh: d.days[date] }));
+  }
+
+  /**
+   * A device's power now from its own figures: its live reading while fresh, else its energy
+   * counter's rate. MELCloud on 2026-11-25: measure_power frozen at 1002 W for hours while the
+   * counter rose 0.1 kWh every 5 min (1.2 kW). null when neither is usable. With the phase share
+   * learned from the house meter, when there is one.
+   */
+  ownPower(id: string, now: number): { w: number; from: 'power' | 'counter'; share: Vec3 | null } | null {
+    const d = this.devices.get(id);
+    if (!d) return null;
+    const share = this.learned(d)?.share ?? null;
+    if (d.w !== null && d.at > 0 && now - d.at <= METERED.OWN_FRESH_MS) return { w: Math.max(0, d.w), from: 'power', share };
+    const c = d.changes ?? [];
+    if (c.length < 2) return null;
+    const a = c[0];
+    const b = c[c.length - 1];
+    const span = b.at - a.at;
+    if (now - b.at > METERED.OWN_COUNTER_MAX_AGE_MS || span < METERED.OWN_COUNTER_MIN_SPAN_MS || span > METERED.OWN_COUNTER_MAX_SPAN_MS || b.kWh < a.kWh) return null;
+    const w = ((b.kWh - a.kWh) * 3.6e9) / span;
+    return w > METERED.OWN_MAX_W ? null : { w: Math.round(w), from: 'counter', share };
   }
 
   running(now: number): Array<{ id: string; name: string; w: number }> {
