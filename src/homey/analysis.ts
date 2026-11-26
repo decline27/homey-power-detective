@@ -2,7 +2,7 @@
  * Everything the settings page, the devices and the flows show, worked out from the engine, the
  * metered devices and the prices. Pure: the app calls it every few minutes.
  */
-import { classify, phaseLabel, phaseShare } from '../engine/clustering';
+import { classify, phaseLabel, phaseShare, minutesSinceSimilar } from '../engine/clustering';
 import { PowerEngine } from '../engine/engine';
 import { LabelMatch, Reference, matchReferences, silentStretches } from '../engine/labels';
 import { Interval, Score } from '../engine/score';
@@ -183,9 +183,13 @@ export function runningNow(
   clusters: LoadCluster[],
   now: number
 ): Array<{ t: number; w: number; delta: Vec3; cluster: LoadCluster | null }> {
+  const done = engine.allActivations();
   return engine
     .running()
-    .map(st => ({ st, cluster: classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters, undefined, true) }))
+    .map(st => {
+      const context = { sinceSimilarMin: minutesSinceSimilar({ start: st.t, delta: st.delta }, done) };
+      return { st, cluster: classify({ start: st.t, end: Math.max(st.t, now), delta: st.delta }, clusters, undefined, true, context) };
+    })
     .filter(x => !x.cluster || now - x.st.t <= x.cluster.maxMinutes * 60_000)
     .map(x => ({ t: x.st.t, w: x.st.delta[0] + x.st.delta[1] + x.st.delta[2], delta: x.st.delta, cluster: x.cluster }));
 }

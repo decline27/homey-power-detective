@@ -56,6 +56,8 @@ export interface LoadCluster {
   periodCv: number | null;
   /** Switches on and off on a steady rhythm: a thermostat or a timer drives it. */
   rhythmic: boolean;
+  /** Most of its runs come in bursts (an oven holding its temperature), not one at a time. */
+  bursty?: boolean;
   activations: Activation[];
 }
 

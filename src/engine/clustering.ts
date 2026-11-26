@@ -61,6 +61,7 @@ export function clusterActivations(
 ): LoadCluster[] {
   const used = new Set<string>();
   return groupActivations(activations.filter(a => activationW(a) > 0 && a.end > a.start), cfg)
+    .flatMap(g => splitBursts(g, cfg))
     .filter(g => g.members.length >= cfg.MIN_COUNT)
     .map(g => describe(g, cfg, window))
     .sort((x, y) => y.kWhPerDay - x.kWhPerDay)
@@ -124,6 +125,51 @@ function groupActivations(activations: Activation[], cfg: ClusteringConfig): Gro
   return evicted.length ? [...groups, ...groupActivations(evicted, cfg)] : groups;
 }
 
+/**
+ * Which of a group's runs (in start order) come in bursts: chains of at least BURST_MIN_RUNS runs,
+ * each starting within BURST_GAP_MIN of the one before ending. Two close runs are a stop seen late.
+ */
+function burstFlags(members: Activation[], cfg: ClusteringConfig): boolean[] {
+  const gap = cfg.BURST_GAP_MIN * 60_000;
+  const flags = members.map(() => false);
+  let from = 0;
+  for (let i = 1; i <= members.length; i++) {
+    if (i < members.length && members[i].start - members[i - 1].end < gap) continue;
+    if (i - from >= cfg.BURST_MIN_RUNS) for (let k = from; k < i; k++) flags[k] = true;
+    from = i;
+  }
+  return flags;
+}
+
+const regroup = (members: Activation[]): Group => {
+  const shares = members.map(a => phaseShare(a.delta));
+  return {
+    share: [0, 1, 2].map(k => shares.reduce((s, x) => s + x[k], 0) / shares.length) as Vec3,
+    logW: members.reduce((s, a) => s + Math.log(activationW(a)), 0) / members.length,
+    members,
+  };
+};
+
+/** A group with both burst runs and lone runs, enough of each: two loads (oven and kettle). */
+function splitBursts(g: Group, cfg: ClusteringConfig): Group[] {
+  const members = [...g.members].sort((x, y) => x.start - y.start);
+  const flags = burstFlags(members, cfg);
+  const burst = members.filter((_, i) => flags[i]);
+  const lone = members.filter((_, i) => !flags[i]);
+  if (burst.length < cfg.MIN_COUNT || lone.length < cfg.MIN_COUNT) return [g];
+  // Lone runs far from the group's others (the kettle, once a morning), not a thermostat's
+  // cycles that only sometimes come close together: the same load either way.
+  const nearest = members
+    .map((a, i) => {
+      const prev = members[i - 1];
+      const next = members[i + 1];
+      return Math.min(prev ? a.start - prev.end : Infinity, next ? next.start - a.end : Infinity) / 60_000;
+    })
+    .filter((_, i) => !flags[i]);
+  if (median(nearest) < cfg.LONE_MIN_GAP_MIN) return [g];
+  return [regroup(lone), regroup(burst)];
+}
+
 function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster {
   const acts = [...g.members].sort((x, y) => x.start - y.start);
   const watts = acts.map(activationW);
@@ -164,6 +210,7 @@ function describe(g: Group, cfg: ClusteringConfig, window?: Window): LoadCluster
     periodMinutes: period,
     periodCv: cv,
     rhythmic: acts.length >= cfg.RHYTHM_MIN_COUNT && cv !== null && cv < cfg.RHYTHM_MAX_CV,
+    bursty: burstFlags(acts, cfg).filter(Boolean).length * 2 > acts.length,
     activations: acts,
   };
 }
@@ -178,7 +225,12 @@ export function classify(
   loads: LoadCluster[],
   cfg: ClusteringConfig = CLUSTERING,
   /** Still on: how long it will run is not known yet, so no run is too short. */
-  running = false
+  running = false,
+  /**
+   * Minutes since a run of the same size and phases ended (negative: still on), or null when none
+   * did lately. Given, it decides between a bursty load and a lone one of the same size.
+   */
+  context?: { sinceSimilarMin: number | null }
 ): LoadCluster | null {
   const w = activationW(a);
   if (!(w > 0)) return null;
@@ -195,11 +247,39 @@ export function classify(
     if (minutes > cfg.MAX_DURATION_FACTOR * c.p90Minutes + cfg.DURATION_SLACK_MIN) continue;
     // Far shorter than the load runs: another appliance of the same size.
     if (!running && minutes < (c.minMinutes ?? 0)) continue;
-    const d = dW / cfg.MAX_LOG_POWER_DIFF + dS / cfg.MAX_SHARE_DISTANCE;
+    let d = dW / cfg.MAX_LOG_POWER_DIFF + dS / cfg.MAX_SHARE_DISTANCE;
+    if (context) {
+      const recent = context.sinceSimilarMin !== null && context.sinceSimilarMin < cfg.BURST_GAP_MIN;
+      const wrong = c.bursty
+        ? !recent && minutes <= cfg.BURST_LONG_MIN
+        : recent || minutes > Math.max(cfg.BURST_LONG_MIN, 1.5 * c.p90Minutes);
+      if (wrong) d += 2; // the other load of this size fits better; still this one if it is the only one
+    }
     if (d < bestD) {
       bestD = d;
       best = c;
     }
+  }
+  return best;
+}
+
+/**
+ * Minutes from the end of the latest run like `a` (same limits as classify) to a's start; null if
+ * none ended within an hour before. Looks at the last 300 runs. For classify's context.
+ */
+export function minutesSinceSimilar(a: { start: number; delta: Vec3 }, acts: Activation[], cfg: ClusteringConfig = CLUSTERING): number | null {
+  const w = activationW({ start: a.start, end: a.start, delta: a.delta });
+  if (!(w > 0)) return null;
+  const share = phaseShare(a.delta);
+  const logW = Math.log(w);
+  let best: number | null = null;
+  for (let i = acts.length - 1; i >= Math.max(0, acts.length - 300); i--) {
+    const b = acts[i];
+    if (b.start >= a.start || a.start - b.end > 3_600_000) continue;
+    const bw = activationW(b);
+    if (!(bw > 0) || Math.abs(Math.log(bw) - logW) > cfg.MAX_LOG_POWER_DIFF || shareDistance(phaseShare(b.delta), share) > cfg.MAX_SHARE_DISTANCE) continue;
+    const m = (a.start - b.end) / 60_000;
+    if (best === null || m < best) best = m;
   }
   return best;
 }

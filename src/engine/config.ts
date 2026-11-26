@@ -74,6 +74,19 @@ export const CLUSTERING = {
    * kettle on L1 is not a 20-min floor heating cycle of the same size.
    */
   MIN_DURATION_DIVISOR: 4,
+  /**
+   * Runs of one size closer than this (minutes, end to next start) are a burst: an oven holding
+   * its temperature (1.7 kW on L3, ~1.5 min on, ~2 min off after a 10 min heat-up) is the kettle's
+   * size on the kettle's phase, but the kettle runs once. Each group is split into its burst runs
+   * and its lone runs when both have MIN_COUNT.
+   */
+  BURST_GAP_MIN: 4,
+  /** A burst is at least this many runs in a chain. */
+  BURST_MIN_RUNS: 4,
+  /** A run this long (minutes) with nothing just before is a burst's first run (the heat-up). */
+  BURST_LONG_MIN: 5,
+  /** ...and only when its lone runs are this far (minutes, median) from the group's other runs. */
+  LONE_MIN_GAP_MIN: 30,
 };
 
 export const STORE = {

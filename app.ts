@@ -10,7 +10,7 @@
  */
 import Homey from 'homey';
 import * as fs from 'fs';
-import { classify } from './src/engine/clustering';
+import { classify, minutesSinceSimilar } from './src/engine/clustering';
 import { PowerEngine } from './src/engine/engine';
 import { Activation, StepEvent, activationKWh, activationW, Vec3 } from './src/engine/types';
 import { DayMeter, DayRecord, localDate } from './src/engine/day-meter';
@@ -315,7 +315,9 @@ module.exports = class PowerDetectiveApp extends Homey.App {
 
   private loadFor(a: Activation, running = false) {
     if (!this.analysis) return null;
-    const c = classify(a, this.analysis.clusters, undefined, running);
+    // Live: the gap to the last run like it tells a burst (the oven holding heat) from a lone run.
+    const context = running ? { sinceSimilarMin: minutesSinceSimilar(a, this.engine.allActivations()) } : undefined;
+    const c = classify(a, this.analysis.clusters, undefined, running, context);
     return c ? this.analysis.loads.find(l => l.id === c.id) ?? null : null;
   }
 
