@@ -49,6 +49,10 @@
       "method": "POST",
       "path": "/name"
     },
+    "getRuns": {
+      "method": "GET",
+      "path": "/runs"
+    },
     "setSteered": {
       "method": "POST",
       "path": "/steered"

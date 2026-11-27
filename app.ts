@@ -289,6 +289,28 @@ module.exports = class PowerDetectiveApp extends Homey.App {
     });
   }
 
+  /**
+   * Finished runs since `since` (at most 24 h back), each with the load it is and that load's
+   * name (the user's name only, no guesses): the wall reads the dishwasher's two heatings and the
+   * oven's cycling from these. The gap to the run before decides a burst (oven) from a lone run.
+   */
+  runs(since: number, now = Date.now()): Array<{ start: number; end: number; w: number; delta: Vec3; loadId: string | null; name: string | null }> {
+    const a = this.analysis;
+    if (!a) return [];
+    const from = Math.max(since, now - 24 * 3_600_000);
+    const all = this.engine.allActivations();
+    const byEnd = [...all].sort((x, y) => x.end - y.end);
+    return all
+      .filter(x => x.end >= from && x.end <= now)
+      .sort((x, y) => x.start - y.start)
+      .map(x => {
+        const before = byEnd.filter(b => b.end <= x.start).slice(-300);
+        const c = classify(x, a.clusters, undefined, false, { sinceSimilarMin: minutesSinceSimilar(x, before) });
+        const load = c ? a.loads.find(l => l.id === c.id) ?? null : null;
+        return { start: x.start, end: x.end, w: Math.round(x.delta[0] + x.delta[1] + x.delta[2]), delta: x.delta.map(Math.round) as Vec3, loadId: load?.id ?? null, name: load?.name ?? null };
+      });
+  }
+
   private sampleOnce(): void {
     const now = Date.now();
     const reading = readingFrom(this.latest, now);

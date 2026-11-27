@@ -3,6 +3,7 @@ interface Ctx {
   homey: { app: any };
   body?: any;
   params?: Record<string, string>;
+  query?: Record<string, string>;
 }
 
 module.exports = {
@@ -13,6 +14,12 @@ module.exports = {
   /** What is on now, fitted to the meter (small: for the wall dashboard and the like). */
   async getLive({ homey }: Ctx) {
     return homey.app.live() ?? { rows: null };
+  },
+
+  /** GET /runs?since=<ms>: finished runs with their load's name (24 h at most). */
+  async getRuns({ homey, query }: Ctx) {
+    const since = Number(query && query.since) || Date.now() - 6 * 3_600_000;
+    return { at: Date.now(), runs: homey.app.runs(since) };
   },
 
   async getMeters({ homey }: Ctx) {
