@@ -76,14 +76,15 @@ describe('energy account', () => {
     expect(sum(tooMuch.rows)).toBeCloseTo(40, 9);
   });
 
-  test('when the parts exceed the meter, estimates give way before exact meters, and the excess is reported', () => {
-    // Estimates first: loads, then always-on, shrink to fit.
+  test('when the parts exceed the meter, always-on gives way first, then loads, never the exact meters', () => {
+    // The inferred always-on gives way first (in winter it holds the metered heat pump's floor
+    // again), then the found loads; the meters are exact.
     const a = buildAccount(input({ totalKWh: 30 }));
     expect(sum(a.rows)).toBeCloseTo(30, 9);
     expect(row(a, 'device:easee')!.kWh).toBe(12);
     expect(row(a, 'device:hp')!.kWh).toBe(8);
-    expect(row(a, 'always_on')!.kWh).toBe(6);
-    expect(row(a, 'load:L1-133')!.kWh).toBeCloseTo(4, 9);
+    expect(row(a, 'always_on')!.kWh).toBeCloseTo(1, 9);
+    expect(row(a, 'load:L1-133')!.kWh).toBe(9);
     expect(a.overlapKWh).toBeCloseTo(5, 9);
     expect(kwh(a, 'unexplained')).toBe(0);
 

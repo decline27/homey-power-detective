@@ -77,10 +77,15 @@ export function buildAccount(x: AccountInput): DayAccount {
   const meterKWh = metered.map(m => m.kWh);
   const sum = () => [...loadKWh, ...alwaysOn, ...meterKWh].reduce((s, v) => s + v, 0);
 
+  // When the parts add up to more than the meter, the least certain part gives way first: the
+  // always-on level is inferred from the lowest draw, which in winter includes the heat pump
+  // (metered on its own counter, not subtracted live), so it counted the heat pump twice and the
+  // detected loads were cut instead (2026-11-24: the oven ran, loads 0 kWh, always-on 17.5 kWh).
+  // Then the found loads; the devices' own meters are exact and give way last.
   const overlapKWh = Math.max(0, sum() - total);
   let excess = overlapKWh;
-  excess -= shrink(loadKWh, excess);
   excess -= shrink(alwaysOn, excess);
+  excess -= shrink(loadKWh, excess);
   shrink(meterKWh, excess);
 
   // Heating explained by the weather: first from what is unexplained, then from what looked
